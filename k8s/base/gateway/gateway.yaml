@@ -1,0 +1,48 @@
+# Single Gateway exposing:
+#   - HTTP  :80   -> ACME HTTP-01 challenge + HTTP->HTTPS redirect (HTTPRoute)
+#   - TLS   :443  -> web admin + JMAP, PASSTHROUGH to Stalwart (TLSRoute)
+#   - TCP   :25/465/587/143/993/110/995/4190 -> mail protocols, L4 passthrough
+#
+# Stalwart terminates TLS for ALL of its protocols (web included), so every
+# listener here is L4 — Envoy never decrypts. The cert-manager-issued cert is
+# mounted into the pod, not referenced by the Gateway.
+#
+# Envoy Gateway provisions one LoadBalancer Service for this Gateway, giving a
+# single external IP that carries every listener below. Point the
+# mail.parlour-world.io A record (and the MX target) at that IP.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: stalwart-gateway
+  namespace: stalwart
+spec:
+  gatewayClassName: stalwart-eg
+  listeners:
+    # --- ACME HTTP-01 + HTTP->HTTPS redirect ---
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: mail.parlour-world.io
+      allowedRoutes:
+        namespaces: { from: Same }
+
+    # --- Web admin + JMAP: TLS passthrough, terminated by Stalwart ---
+    - name: https
+      protocol: TLS
+      port: 443
+      hostname: mail.parlour-world.io
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        kinds: [{ kind: TLSRoute }]
+        namespaces: { from: Same }
+
+    # --- Mail protocols: raw TCP, terminated by Stalwart ---
+    - { name: smtp,        protocol: TCP, port: 25,   allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
+    - { name: submissions, protocol: TCP, port: 465,  allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
+    - { name: submission,  protocol: TCP, port: 587,  allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
+    - { name: imaps,       protocol: TCP, port: 993,  allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
+    - { name: imap,        protocol: TCP, port: 143,  allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
+    - { name: pop3s,       protocol: TCP, port: 995,  allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
+    - { name: pop3,        protocol: TCP, port: 110,  allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
+    - { name: managesieve, protocol: TCP, port: 4190, allowedRoutes: { kinds: [{ kind: TCPRoute }] } }

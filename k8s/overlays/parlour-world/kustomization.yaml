@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Pin the Stalwart image to a real tag/digest for production.
+images:
+  - name: stalwartlabs/stalwart
+    newTag: v0.16.7
+
+# --- Bootstrap config --------------------------------------------------------
+# Regenerate the stalwart-bootstrap ConfigMap from this overlay's own copy of
+# the JSON (config-bootstrap.json here), which has the real GCS bucket filled in.
+# `behavior: replace` overrides the base configMapGenerator of the same name.
+configMapGenerator:
+  - name: stalwart-bootstrap
+    behavior: replace
+    files:
+      - config.json=config-bootstrap.json
+
+# --- Secrets -----------------------------------------------------------------
+# Provide real values via these env files (gitignored — see k8s/.gitignore), or
+# replace these generators with an ExternalSecret / sealed-secret in your GitOps
+# pipeline. The keys must match what the manifests reference.
+secretGenerator:
+  - name: stalwart-postgres
+    behavior: replace
+    envs:
+      - secrets/postgres.env       # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
+  - name: stalwart-runtime
+    behavior: replace
+    envs:
+      - secrets/runtime.env        # STALWART_PG_PASSWORD / STALWART_GCS_SECRET_KEY

@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stalwart
+  namespace: stalwart
+  labels:
+    app.kubernetes.io/name: stalwart
+    app.kubernetes.io/part-of: stalwart
+spec:
+  serviceName: stalwart
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stalwart
+      app.kubernetes.io/part-of: stalwart
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: stalwart
+        app.kubernetes.io/part-of: stalwart
+      # Note: rollout on config change is handled automatically — the
+      # configMapGenerator hash suffix changes the volume's ConfigMap name,
+      # which mutates the pod spec and triggers a new revision. No manual
+      # checksum annotation is needed.
+    spec:
+      securityContext:
+        fsGroup: 2000          # stalwart group baked into the official image
+        runAsUser: 2000
+        runAsGroup: 2000
+        runAsNonRoot: true
+      initContainers:
+        # Stage the bootstrap config from the read-only ConfigMap into the
+        # writable /etc/stalwart volume. Stalwart writes generated state (DKIM
+        # keys, ACME cache) back next to config.json, so it can't live on a
+        # read-only mount.
+        - name: render-config
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              cp /bootstrap/config.json /etc/stalwart/config.json
+              echo "Bootstrap config staged at /etc/stalwart/config.json"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: config-src, mountPath: /bootstrap, readOnly: true }
+            - { name: etc,        mountPath: /etc/stalwart }
+      containers:
+        - name: stalwart
+          image: stalwartlabs/stalwart:latest   # pin a digest/tag in the overlay
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/stalwart/config.json"]
+          securityContext:
+            allowPrivilegeEscalation: true   # required for ambient CAP_NET_BIND_SERVICE
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+          env:
+            - name: STALWART_HOSTNAME
+              value: mail.parlour-world.io
+            - name: STALWART_PUBLIC_URL
+              value: https://mail.parlour-world.io
+            - name: STALWART_HTTPS_PORT
+              value: "443"
+            # Cluster node role (single-node default). See crates/store/src/registry/local.rs.
+            - name: STALWART_ROLE
+              value: "all"
+            - name: STALWART_PG_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: stalwart-runtime, key: STALWART_PG_PASSWORD }
+            # GCS HMAC secret key — referenced by blobStore.secretKey in the
+            # bootstrap JSON. The matching access key *id* is not secret and is
+            # a literal in config-bootstrap.json (Stalwart's S3 accessKey field
+            # accepts only a string, not an env-var reference).
+            - name: STALWART_GCS_SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: stalwart-runtime, key: STALWART_GCS_SECRET_KEY }
+          ports:
+            - { name: smtp,        containerPort: 25 }
+            - { name: submissions, containerPort: 465 }
+            - { name: submission,  containerPort: 587 }
+            - { name: imaps,       containerPort: 993 }
+            - { name: imap,        containerPort: 143 }
+            - { name: pop3s,       containerPort: 995 }
+            - { name: pop3,        containerPort: 110 }
+            - { name: managesieve, containerPort: 4190 }
+            - { name: https,       containerPort: 443 }
+            - { name: setup,       containerPort: 8080 }
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "2000m"
+              memory: 2Gi
+          # Probe strategy must survive the v0.16 two-phase bootstrap:
+          #   Phase 1 (bootstrap mode): only :8080 (setup) is open; :443 is NOT.
+          #   Phase 2 (after the operator completes setup): :443 opens.
+          # The startupProbe targets :443 with a very long window. Until :443
+          # first comes up — i.e. until first-run setup is finished — liveness
+          # and readiness are SUSPENDED, so the pod is never killed during the
+          # (manual, possibly multi-hour) bootstrap. The setup UI on :8080 is
+          # reached via `kubectl port-forward` meanwhile; it is intentionally
+          # not part of the probe path. Once :443 is up the startupProbe passes
+          # once and hands off to liveness/readiness.
+          #
+          # If you expect setup to take longer than the window below, raise
+          # failureThreshold or apply it to :8080 instead and document that
+          # liveness must be re-pointed after setup.
+          startupProbe:
+            tcpSocket: { port: https }
+            periodSeconds: 15
+            failureThreshold: 240        # ~60 min for manual first-run setup
+          readinessProbe:
+            tcpSocket: { port: https }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket: { port: https }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - { name: etc,  mountPath: /etc/stalwart }
+            - { name: data, mountPath: /var/lib/stalwart }
+            - { name: tls,  mountPath: /etc/stalwart/tls, readOnly: true }
+      volumes:
+        - name: config-src
+          configMap:
+            name: stalwart-bootstrap
+            items:
+              - { key: config.json, path: config.json }
+        - name: tls
+          secret:
+            secretName: stalwart-tls    # populated by cert-manager (see gateway/certificate.yaml)
+            optional: true
+  volumeClaimTemplates:
+    - metadata:
+        name: etc
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: stalwart-immediate
+        resources:
+          requests:
+            storage: 1Gi
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: stalwart-immediate
+        resources:
+          requests:
+            storage: 5Gi

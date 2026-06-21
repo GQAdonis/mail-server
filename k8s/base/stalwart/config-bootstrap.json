@@ -1,0 +1,49 @@
+{
+  "serverHostname": "mail.parlour-world.io",
+  "defaultDomain": "parlour-world.io",
+  "requestTlsCertificate": false,
+  "generateDkimKeys": true,
+  "dataStore": {
+    "@type": "PostgreSql",
+    "host": "stalwart-postgres.stalwart.svc.cluster.local",
+    "port": 5432,
+    "database": "stalwart",
+    "authUsername": "stalwart",
+    "authSecret": {
+      "@type": "EnvironmentVariable",
+      "variableName": "STALWART_PG_PASSWORD"
+    },
+    "useTls": false,
+    "allowInvalidCerts": false,
+    "poolRecyclingMethod": "Fast"
+  },
+  "blobStore": {
+    "@type": "S3",
+    "region": {
+      "@type": "Custom",
+      "customEndpoint": "https://storage.googleapis.com",
+      "customRegion": "auto"
+    },
+    "bucket": "REPLACE_ME_gcs_bucket",
+    "accessKey": "REPLACE_ME_gcs_hmac_access_key_id",
+    "secretKey": {
+      "@type": "EnvironmentVariable",
+      "variableName": "STALWART_GCS_SECRET_KEY"
+    },
+    "keyPrefix": "blobs/",
+    "verifyAfterWrite": true
+  },
+  "searchStore": { "@type": "PostgreSql",
+    "host": "stalwart-postgres.stalwart.svc.cluster.local",
+    "port": 5432,
+    "database": "stalwart",
+    "authUsername": "stalwart",
+    "authSecret": {
+      "@type": "EnvironmentVariable",
+      "variableName": "STALWART_PG_PASSWORD"
+    },
+    "useTls": false
+  },
+  "inMemoryStore": { "@type": "Default" },
+  "directory": { "@type": "Internal" }
+}

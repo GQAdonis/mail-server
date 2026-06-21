@@ -1,0 +1,47 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stalwart
+
+commonLabels:
+  app.kubernetes.io/part-of: stalwart
+
+resources:
+  - namespace.yaml
+  - storageclass-immediate.yaml
+  # Postgres
+  - postgres/service.yaml
+  - postgres/statefulset.yaml
+  # Stalwart
+  - stalwart/service.yaml
+  - stalwart/statefulset.yaml
+  # Envoy Gateway + routes
+  - gateway/gatewayclass.yaml
+  - gateway/gateway.yaml
+  - gateway/httproute-web.yaml
+  - gateway/tcproutes.yaml
+  # cert-manager
+  - gateway/certificate.yaml
+
+# Bootstrap config (the single v0.16 JSON file that points Stalwart at Postgres).
+configMapGenerator:
+  - name: stalwart-bootstrap
+    files:
+      - config.json=stalwart/config-bootstrap.json
+
+# Secrets are declared here with PLACEHOLDER values so that kustomize's
+# name-reference transformer can rewrite the hashed Secret names everywhere they
+# are consumed (secretKeyRef in the StatefulSets). Each overlay overrides these
+# with `behavior: replace` and real values. Declaring them only in the overlay
+# would leave the base StatefulSets' secretKeyRef.name un-rewritten — the pods
+# would then reference the unhashed name and fail to find the Secret.
+secretGenerator:
+  - name: stalwart-postgres
+    envs:
+      - secrets/postgres.env
+  - name: stalwart-runtime
+    envs:
+      - secrets/runtime.env
+
+generatorOptions:
+  disableNameSuffixHash: false   # hash suffix rolls the pods when config/secrets change

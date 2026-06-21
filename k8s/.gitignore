@@ -1,0 +1,6 @@
+# Real secret values live only in overlays/<env>/secrets/*.env and are NEVER
+# committed. The base placeholder env files (base/secrets/*.env) ARE tracked —
+# they carry only "changeme-overridden-by-overlay" values so the base builds.
+overlays/**/secrets/*.env
+!overlays/**/secrets/*.env.example
+**/secret.yaml

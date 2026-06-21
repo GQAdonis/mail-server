@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stalwart
+  labels:
+    app.kubernetes.io/part-of: stalwart
+    pod-security.kubernetes.io/enforce: baseline
