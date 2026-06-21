@@ -32,19 +32,17 @@ patches:
       - op: replace
         path: /spec/volumeClaimTemplates/1/spec/resources/requests/storage
         value: 40Gi
-  # First-run access: enable recovery mode so admin:<password> (from the
-  # stalwart-runtime secret) can log in to the web UI to complete setup.
-  # Once setup is done and a real admin account exists, remove this patch
-  # and STALWART_RECOVERY_ADMIN from the secret, then roll the pod.
+  # First-run access: provide a FALLBACK ADMIN credential (admin:<password>
+  # from the stalwart-runtime secret). This is checked at normal authentication
+  # time (crates/common/src/auth/authentication.rs) — NOT gated on recovery
+  # mode — so the server runs normally on :443 (web UI reachable) while still
+  # allowing the operator to log in before any real admin account exists.
+  # After creating a real admin account, remove this patch + the
+  # STALWART_RECOVERY_ADMIN secret key, then roll the pod.
   - target:
       kind: StatefulSet
       name: stalwart
     patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value:
-          name: STALWART_RECOVERY_MODE
-          value: "true"
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
