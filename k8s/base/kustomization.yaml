@@ -16,7 +16,7 @@ resources:
   - stalwart/service.yaml
   - stalwart/statefulset.yaml
   # Envoy Gateway + routes
-  - gateway/gatewayclass.yaml
+  # NOTE: no GatewayClass here — we reuse the cluster's shared "eg" class.
   - gateway/gateway.yaml
   - gateway/httproute-web.yaml
   - gateway/tcproutes.yaml

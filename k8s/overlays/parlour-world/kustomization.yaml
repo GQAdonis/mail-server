@@ -7,17 +7,31 @@ resources:
 # Pin the Stalwart image to a real tag/digest for production.
 images:
   - name: stalwartlabs/stalwart
-    newTag: v0.16.7
+    newTag: v0.16.10
 
 # --- Bootstrap config --------------------------------------------------------
 # Regenerate the stalwart-bootstrap ConfigMap from this overlay's own copy of
-# the JSON (config-bootstrap.json here), which has the real GCS bucket filled in.
+# the JSON (config-bootstrap.json here). This deploy uses a FileSystem blob
+# store on the data PVC (the provided GCP service account lacks
+# storage.hmacKeys.create, so GCS S3-interop keys can't be minted yet). The GCS
+# bucket gs://parlour-world-mail-blobs is created and ready for a later
+# migration to the S3 blob store once HMAC keys are available.
 # `behavior: replace` overrides the base configMapGenerator of the same name.
 configMapGenerator:
   - name: stalwart-bootstrap
     behavior: replace
     files:
       - config.json=config-bootstrap.json
+
+# Blobs live on the data PVC now (FileSystem blob store) — enlarge it.
+patches:
+  - target:
+      kind: StatefulSet
+      name: stalwart
+    patch: |-
+      - op: replace
+        path: /spec/volumeClaimTemplates/1/spec/resources/requests/storage
+        value: 40Gi
 
 # --- Secrets -----------------------------------------------------------------
 # Provide real values via these env files (gitignored — see k8s/.gitignore), or
