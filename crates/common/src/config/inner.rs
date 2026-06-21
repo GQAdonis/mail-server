@@ -178,6 +178,10 @@ impl Caches {
                 ((std::mem::size_of::<Ipv6Addr>() + 255) * 2) as u64,
             ),
             dns_tlsa: CacheWithTtl::new(cache.dns_tlsa, (std::mem::size_of::<Tlsa>() + 255) as u64),
+            dns_dnssec: CacheWithTtl::new(
+                cache.dns_tlsa,
+                (std::mem::size_of::<bool>() + 255) as u64,
+            ),
             dns_mta_sts: CacheWithTtl::new(
                 cache.dns_mta_sts,
                 (std::mem::size_of::<Policy>() + 255) as u64,

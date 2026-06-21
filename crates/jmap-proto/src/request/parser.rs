@@ -10,8 +10,7 @@ use super::{
 };
 use crate::request::{
     CopyRequestMethod, GetRequestMethod, ParseRequestMethod, QueryChangesRequestMethod,
-    QueryRequestMethod, SetRequestMethod,
-    deserialize::{DeserializeArguments, deserialize_request},
+    QueryRequestMethod, SetRequestMethod, deserialize::DeserializeArguments,
 };
 use serde::{
     Deserialize, Deserializer,
@@ -713,7 +712,45 @@ impl<'de> Deserialize<'de> for Request<'de> {
     where
         D: Deserializer<'de>,
     {
-        deserialize_request(deserializer)
+        struct RequestVisitor;
+
+        impl<'de> Visitor<'de> for RequestVisitor {
+            type Value = Request<'de>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a JMAP request object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut target = Request::default();
+                let mut has_using = false;
+                let mut has_method_calls = false;
+
+                while let Some(key) = map.next_key::<&str>()? {
+                    match key {
+                        "using" => has_using = true,
+                        "methodCalls" => has_method_calls = true,
+                        _ => {}
+                    }
+                    target
+                        .deserialize_argument(key, &mut map)
+                        .map_err(de::Error::custom)?;
+                }
+
+                if !has_using || !has_method_calls {
+                    return Err(de::Error::custom(
+                        "Request is missing the \"using\" or \"methodCalls\" property.",
+                    ));
+                }
+
+                Ok(target)
+            }
+        }
+
+        deserializer.deserialize_map(RequestVisitor)
     }
 }
 

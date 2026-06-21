@@ -63,7 +63,8 @@ impl ThreadGet for Server {
             all_ids.insert(item.document_id);
         }
 
-        let ids = if let Some(ids) = request.unwrap_ids(self.core.jmap.get_max_objects)? {
+        let (ids, not_found_ids) = request.unwrap_ids(self.core.jmap.get_max_objects)?;
+        let ids = if let Some(ids) = ids {
             ids
         } else {
             thread_map
@@ -84,7 +85,7 @@ impl ThreadGet for Server {
                 .await?
                 .into(),
             list: Vec::with_capacity(ids.len()),
-            not_found: vec![],
+            not_found: not_found_ids,
         };
 
         let ordered_ids = if add_email_ids && !all_ids.is_empty() {
@@ -125,7 +126,7 @@ impl ThreadGet for Server {
                 }
                 response.list.push(thread.into());
             } else {
-                response.not_found.push(id);
+                response.push_not_found(id);
             }
         }
 

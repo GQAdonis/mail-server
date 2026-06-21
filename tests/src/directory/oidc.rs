@@ -13,6 +13,7 @@ use registry::{schema::structs, types::map::Map};
 
 pub async fn test() {
     println!("Running OIDC directory tests...");
+    crate::utils::containers::ensure_keycloak().await;
     let config = structs::OidcDirectory {
         description: "Test OIDC directory".to_string(),
         issuer_url: "http://localhost:9080/realms/stalwart".to_string(),

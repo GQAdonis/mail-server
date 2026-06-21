@@ -62,6 +62,7 @@ pub struct Http {
     pub allowed_endpoint: IfBlock,
     pub response_headers: Vec<(hyper::header::HeaderName, hyper::header::HeaderValue)>,
     pub use_forwarded: bool,
+    pub redirect_root: Option<String>,
 }
 
 #[derive(Clone)]
@@ -448,6 +449,7 @@ impl Http {
             rate_anonymous: http.rate_limit_anonymous,
             response_headers: http_headers,
             use_forwarded: http.use_x_forwarded,
+            redirect_root: http.redirect_root,
         }
     }
 }

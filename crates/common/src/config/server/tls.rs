@@ -189,6 +189,17 @@ pub(crate) fn build_certified_key(
 pub(crate) fn build_self_signed_cert(
     domains: impl Into<Vec<String>>,
 ) -> Result<CertifiedKey, String> {
+    let domains = domains
+        .into()
+        .into_iter()
+        .map(|domain| {
+            if domain.is_ascii() {
+                domain
+            } else {
+                idna::domain_to_ascii(&domain).unwrap_or(domain)
+            }
+        })
+        .collect::<Vec<_>>();
     let rcgen::CertifiedKey { cert, signing_key } = generate_simple_self_signed(domains)
         .map_err(|err| format!("Failed to generate self-signed certificate: {err}",))?;
     build_certified_key(

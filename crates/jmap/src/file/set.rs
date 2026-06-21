@@ -19,7 +19,7 @@ use jmap_proto::{
         file_node::{self, FileNodeProperty, FileNodeValue, OnExists},
     },
     references::resolve::ResolveCreatedReference,
-    request::IntoValid,
+    request::MaybeInvalid,
     types::state::State,
 };
 use jmap_tools::{JsonPointerItem, Key, Value};
@@ -68,7 +68,7 @@ impl FileNodeSet for Server {
             )
             .await?;
         let mut response = SetResponse::from_request(&request, self.core.jmap.set_max_objects)?;
-        let mut will_destroy = request.unwrap_destroy().into_valid().collect::<Vec<_>>();
+        let mut will_destroy = response.collect_will_destroy(request.unwrap_destroy());
         let is_shared = access_token.is_shared(account_id);
         let on_destroy_remove_children = request
             .arguments
@@ -89,59 +89,60 @@ impl FileNodeSet for Server {
             let mut file_node = FileNode::default();
 
             // Process changes
-            let has_acl_changes = match update_file_node(object, &mut file_node, true, &response) {
-                Ok(result) => {
-                    if let Some(blob_id) = result.blob_id {
-                        let file_details = file_node.file.get_or_insert_default();
-                        if !self.has_access_blob(&blob_id, access_token).await? {
-                            response.not_created.append(
-                                id,
-                                SetError::forbidden().with_description(format!(
-                                    "You do not have access to blobId {blob_id}."
-                                )),
-                            );
-                            continue;
-                        } else if let Some(blob_contents) = self
-                            .blob_store()
-                            .get_blob(blob_id.hash.as_slice(), 0..usize::MAX)
-                            .await?
+            let has_acl_changes =
+                match update_file_node(None, object, &mut file_node, true, &response) {
+                    Ok(result) => {
+                        if let Some(blob_id) = result.blob_id {
+                            let file_details = file_node.file.get_or_insert_default();
+                            if !self.has_access_blob(&blob_id, access_token).await? {
+                                response.not_created.append(
+                                    id,
+                                    SetError::forbidden().with_description(format!(
+                                        "You do not have access to blobId {blob_id}."
+                                    )),
+                                );
+                                continue;
+                            } else if let Some(blob_contents) = self
+                                .blob_store()
+                                .get_blob(blob_id.hash.as_slice(), 0..usize::MAX)
+                                .await?
+                            {
+                                file_details.size = blob_contents.len() as u32;
+                            } else {
+                                response.not_created.append(
+                                    id,
+                                    SetError::invalid_properties()
+                                        .with_property(FileNodeProperty::BlobId)
+                                        .with_description("Blob could not be found."),
+                                );
+                                continue 'create;
+                            }
+
+                            file_details.blob_hash = blob_id.hash;
+                        }
+
+                        // Validate blob hash
+                        if file_node
+                            .file
+                            .as_ref()
+                            .is_some_and(|f| f.blob_hash.is_empty())
                         {
-                            file_details.size = blob_contents.len() as u32;
-                        } else {
                             response.not_created.append(
                                 id,
                                 SetError::invalid_properties()
                                     .with_property(FileNodeProperty::BlobId)
-                                    .with_description("Blob could not be found."),
+                                    .with_description("Missing blob id."),
                             );
                             continue 'create;
                         }
 
-                        file_details.blob_hash = blob_id.hash;
+                        result.has_acl_changes
                     }
-
-                    // Validate blob hash
-                    if file_node
-                        .file
-                        .as_ref()
-                        .is_some_and(|f| f.blob_hash.is_empty())
-                    {
-                        response.not_created.append(
-                            id,
-                            SetError::invalid_properties()
-                                .with_property(FileNodeProperty::BlobId)
-                                .with_description("Missing blob id."),
-                        );
+                    Err(err) => {
+                        response.not_created.append(id, err);
                         continue 'create;
                     }
-
-                    result.has_acl_changes
-                }
-                Err(err) => {
-                    response.not_created.append(id, err);
-                    continue 'create;
-                }
-            };
+                };
 
             // Validate hierarchy
             if let Err(err) =
@@ -311,7 +312,14 @@ impl FileNodeSet for Server {
         }
 
         // Process updates
-        'update: for (id, object) in request.unwrap_update().into_valid() {
+        'update: for (id, object) in request.unwrap_update() {
+            let id = match id {
+                MaybeInvalid::Value(id) => id,
+                invalid => {
+                    response.not_updated.append(invalid, SetError::not_found());
+                    continue 'update;
+                }
+            };
             // Make sure id won't be destroyed
             if will_destroy.contains(&id) || implicit_destroys.contains(&id.document_id()) {
                 response.not_updated.append(id, SetError::will_destroy());
@@ -343,7 +351,7 @@ impl FileNodeSet for Server {
 
             // Apply changes
             let (has_acl_changes, modified_set) =
-                match update_file_node(object, &mut new_file_node, false, &response) {
+                match update_file_node(Some(id), object, &mut new_file_node, false, &response) {
                     Ok(result) => {
                         let modified_set = result.modified_set;
                         if let Some(blob_id) = result.blob_id {
@@ -651,6 +659,7 @@ impl ResolveCreatedReference<FileNodeProperty, FileNodeValue> for NoResolver {
 }
 
 pub(super) fn update_file_node<R: ResolveCreatedReference<FileNodeProperty, FileNodeValue>>(
+    expected_id: Option<Id>,
     updates: Value<'_, FileNodeProperty, FileNodeValue>,
     file_node: &mut FileNode,
     is_create: bool,
@@ -791,6 +800,13 @@ pub(super) fn update_file_node<R: ResolveCreatedReference<FileNodeProperty, File
                     value,
                 )?;
                 has_acl_changes = true;
+            }
+            (FileNodeProperty::Id, value) => {
+                if !expected_id.is_some_and(|expected| crate::matches_id(&value, expected)) {
+                    return Err(SetError::invalid_properties()
+                        .with_property(FileNodeProperty::Id)
+                        .with_description("The id property is immutable."));
+                }
             }
             (property, _) => {
                 return Err(SetError::invalid_properties()

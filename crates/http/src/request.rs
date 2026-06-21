@@ -44,6 +44,7 @@ use jmap::{
     websocket::upgrade::WebSocketUpgrade,
 };
 use jmap_proto::request::{Request, capability::Session};
+use percent_encoding::percent_decode_str;
 use registry::schema::enums::Permission;
 use std::{net::IpAddr, str::FromStr, sync::Arc};
 use store::dispatch::lookup::KeyValue;
@@ -86,6 +87,24 @@ impl ParseHttp for Server {
                         // Authenticate request
                         let (_in_flight, access_token) =
                             self.authenticate_headers(&req, &session).await?;
+
+                        if let Some(content_type) = req.headers().get(CONTENT_TYPE) {
+                            let is_json = content_type
+                                .to_str()
+                                .ok()
+                                .map(|ct| {
+                                    ct.split_once(';')
+                                        .map_or(ct, |(m, _)| m)
+                                        .trim()
+                                        .eq_ignore_ascii_case("application/json")
+                                })
+                                .unwrap_or(false);
+                            if !is_json {
+                                return Err(trc::JmapEvent::NotJson
+                                    .into_err()
+                                    .details("The Content-Type header must be application/json."));
+                            }
+                        }
 
                         let bytes = fetch_body(
                             &mut req,
@@ -272,6 +291,13 @@ impl ParseHttp for Server {
                         .await?;
 
                     return self.handle_oauth_metadata().await;
+                }
+                ("oauth-protected-resource", &Method::GET) => {
+                    // Limit anonymous requests
+                    self.is_http_anonymous_request_allowed(session.remote_ip)
+                        .await?;
+
+                    return self.handle_oauth_protected_resource().await;
                 }
                 ("openid-configuration", &Method::GET) => {
                     // Limit anonymous requests
@@ -471,8 +497,12 @@ impl ParseHttp for Server {
                     self.is_http_anonymous_request_allowed(session.remote_ip)
                         .await?;
 
+                    let path_email = path
+                        .map(|segment| percent_decode_str(segment).decode_utf8_lossy().into_owned())
+                        .find(|segment| segment.contains('@'));
+
                     return self
-                        .handle_autodiscover_v2_request(req.uri().query())
+                        .handle_autodiscover_v2_request(req.uri().query(), path_email.as_deref())
                         .await
                         .map(|result| match result {
                             Ok(resource) => resource.into_http_response(),
@@ -599,6 +629,8 @@ impl ParseHttp for Server {
                 if path.next().is_none() {
                     if !external.is_empty() {
                         return Ok(HttpResponse::redirect(format!("/{external}/")));
+                    } else if let Some(url) = &self.core.network.http.redirect_root {
+                        return Ok(HttpResponse::redirect(url.clone()));
                     }
                 } else if let Some(resource) = self
                     .inner

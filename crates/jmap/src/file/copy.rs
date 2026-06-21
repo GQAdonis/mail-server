@@ -171,58 +171,58 @@ impl FileNodeCopy for Server {
             // ACLs are account-scoped; do not carry the source account's grants over.
             file_node.acls.clear();
 
-            let has_acl_changes = match update_file_node(create, &mut file_node, true, &NoResolver)
-            {
-                Ok(result) => {
-                    if let Some(blob_id) = result.blob_id {
-                        let file_details = file_node.file.get_or_insert_default();
-                        if !self.has_access_blob(&blob_id, access_token).await? {
-                            response.not_created.append(
-                                id,
-                                SetError::forbidden().with_description(format!(
-                                    "You do not have access to blobId {blob_id}."
-                                )),
-                            );
-                            continue 'create;
-                        } else if let Some(blob_contents) = self
-                            .blob_store()
-                            .get_blob(blob_id.hash.as_slice(), 0..usize::MAX)
-                            .await?
+            let has_acl_changes =
+                match update_file_node(None, create, &mut file_node, true, &NoResolver) {
+                    Ok(result) => {
+                        if let Some(blob_id) = result.blob_id {
+                            let file_details = file_node.file.get_or_insert_default();
+                            if !self.has_access_blob(&blob_id, access_token).await? {
+                                response.not_created.append(
+                                    id,
+                                    SetError::forbidden().with_description(format!(
+                                        "You do not have access to blobId {blob_id}."
+                                    )),
+                                );
+                                continue 'create;
+                            } else if let Some(blob_contents) = self
+                                .blob_store()
+                                .get_blob(blob_id.hash.as_slice(), 0..usize::MAX)
+                                .await?
+                            {
+                                file_details.size = blob_contents.len() as u32;
+                            } else {
+                                response.not_created.append(
+                                    id,
+                                    SetError::invalid_properties()
+                                        .with_property(FileNodeProperty::BlobId)
+                                        .with_description("Blob could not be found."),
+                                );
+                                continue 'create;
+                            }
+                            file_details.blob_hash = blob_id.hash;
+                        }
+
+                        if file_node
+                            .file
+                            .as_ref()
+                            .is_some_and(|f| f.blob_hash.is_empty())
                         {
-                            file_details.size = blob_contents.len() as u32;
-                        } else {
                             response.not_created.append(
                                 id,
                                 SetError::invalid_properties()
                                     .with_property(FileNodeProperty::BlobId)
-                                    .with_description("Blob could not be found."),
+                                    .with_description("Missing blob id."),
                             );
                             continue 'create;
                         }
-                        file_details.blob_hash = blob_id.hash;
-                    }
 
-                    if file_node
-                        .file
-                        .as_ref()
-                        .is_some_and(|f| f.blob_hash.is_empty())
-                    {
-                        response.not_created.append(
-                            id,
-                            SetError::invalid_properties()
-                                .with_property(FileNodeProperty::BlobId)
-                                .with_description("Missing blob id."),
-                        );
+                        result.has_acl_changes
+                    }
+                    Err(err) => {
+                        response.not_created.append(id, err);
                         continue 'create;
                     }
-
-                    result.has_acl_changes
-                }
-                Err(err) => {
-                    response.not_created.append(id, err);
-                    continue 'create;
-                }
-            };
+                };
 
             if let Err(err) =
                 validate_file_node_hierarchy(None, &file_node, is_shared, &cache, &created_folders)

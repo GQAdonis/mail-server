@@ -9,7 +9,7 @@ use crate::outbound::DeliveryResult;
 use crate::outbound::client::{
     SmtpClient, from_error_details, from_error_status, from_mail_send_error,
 };
-use crate::outbound::dane::dnssec::TlsaLookup;
+use crate::outbound::dane::dnssec::{DnssecStatus, TlsaLookup};
 use crate::outbound::error::ClientError;
 use crate::outbound::lookup::{DnsLookup, SourceIp};
 use crate::outbound::mta_sts::lookup::MtaStsLookup;
@@ -630,9 +630,21 @@ impl QueuedMessage {
                     }
                 }
 
+                // Update TLS strategy
+                tls_strategy = server.get_tls_or_default(
+                    &server
+                        .eval_if::<String, _>(&queue_config.tls, &envelope, message.span_id)
+                        .await
+                        .unwrap_or_else(|| "default".to_string()),
+                    message.span_id,
+                );
+
                 // Obtain source and remote IPs
                 let time = Instant::now();
-                let resolve_result = match server.resolve_host(remote_host, &envelope).await {
+                let resolve_result = match server
+                    .resolve_host(remote_host, &envelope, tls_strategy.try_dane() && is_smtp)
+                    .await
+                {
                     Ok(result) => {
                         trc::event!(
                             Delivery(DeliveryEvent::IpLookup),
@@ -665,142 +677,119 @@ impl QueuedMessage {
                     }
                 };
 
-                // Update TLS strategy
-                tls_strategy = server.get_tls_or_default(
-                    &server
-                        .eval_if::<String, _>(&queue_config.tls, &envelope, message.span_id)
-                        .await
-                        .unwrap_or_else(|| "default".to_string()),
-                    message.span_id,
-                );
-
                 // Lookup DANE policy
                 let dane_policy = if tls_strategy.try_dane() && is_smtp {
                     let time = Instant::now();
                     let strict = tls_strategy.is_dane_required();
-                    match server
-                        .tlsa_lookup(format!("_25._tcp.{}.", envelope.mx))
-                        .await
-                    {
-                        Ok(Some(tlsa)) => {
-                            if tlsa.has_end_entities {
-                                trc::event!(
-                                    Dane(DaneEvent::TlsaRecordFetch),
-                                    SpanId = message.span_id,
-                                    Domain = domain.to_string(),
-                                    Hostname = envelope.mx.to_string(),
-                                    Details = format!("{tlsa:?}"),
-                                    Strict = strict,
-                                    Elapsed = time.elapsed(),
-                                );
 
-                                tlsa.into()
-                            } else {
-                                trc::event!(
-                                    Dane(DaneEvent::TlsaRecordInvalid),
-                                    SpanId = message.span_id,
-                                    Domain = domain.to_string(),
-                                    Hostname = envelope.mx.to_string(),
-                                    Details = format!("{tlsa:?}"),
-                                    Strict = strict,
-                                    Elapsed = time.elapsed(),
-                                );
+                    if resolve_result.dnssec_status == DnssecStatus::Insecure {
+                        trc::event!(
+                            Dane(DaneEvent::TlsaRecordNotDnssecSigned),
+                            SpanId = message.span_id,
+                            Domain = domain.to_string(),
+                            Hostname = envelope.mx.to_string(),
+                            Strict = strict,
+                            Elapsed = time.elapsed(),
+                        );
 
-                                // Report invalid TLSA record
-                                if let Some(tls_report) = &tls_report {
-                                    server
-                                        .schedule_report(TlsEvent {
-                                            policy: tlsa.into(),
-                                            domain: domain.to_string(),
-                                            failure: FailureDetails::new(ResultType::TlsaInvalid)
+                        if strict {
+                            // Report DANE required
+                            if let Some(tls_report) = &tls_report {
+                                server
+                                    .schedule_report(TlsEvent {
+                                        policy: PolicyType::Tlsa(None),
+                                        domain: domain.to_string(),
+                                        failure: FailureDetails::new(ResultType::DaneRequired)
+                                            .with_receiving_mx_hostname(envelope.mx)
+                                            .with_failure_reason_code(
+                                                "MX host is not in a DNSSEC signed zone.",
+                                            )
+                                            .into(),
+                                        tls_record: tls_report.record.clone(),
+                                        interval: tls_report.interval,
+                                        span_id: message.span_id,
+                                    })
+                                    .await;
+                            }
+
+                            last_status = Status::PermanentFailure(ErrorDetails {
+                                entity: envelope.mx.into(),
+                                details: Error::DaneError("No TLSA DNSSEC records found".into()),
+                            });
+                            continue 'next_host;
+                        }
+                        None
+                    } else {
+                        match server
+                            .tlsa_lookup(format!("_25._tcp.{}.", envelope.mx))
+                            .await
+                        {
+                            Ok(Some(tlsa)) => {
+                                if tlsa.has_end_entities || tlsa.has_intermediates {
+                                    trc::event!(
+                                        Dane(DaneEvent::TlsaRecordFetch),
+                                        SpanId = message.span_id,
+                                        Domain = domain.to_string(),
+                                        Hostname = envelope.mx.to_string(),
+                                        Details = format!("{tlsa:?}"),
+                                        Strict = strict,
+                                        Elapsed = time.elapsed(),
+                                    );
+
+                                    tlsa.into()
+                                } else {
+                                    trc::event!(
+                                        Dane(DaneEvent::TlsaRecordInvalid),
+                                        SpanId = message.span_id,
+                                        Domain = domain.to_string(),
+                                        Hostname = envelope.mx.to_string(),
+                                        Details = format!("{tlsa:?}"),
+                                        Strict = strict,
+                                        Elapsed = time.elapsed(),
+                                    );
+
+                                    // Report invalid TLSA record
+                                    if let Some(tls_report) = &tls_report {
+                                        server
+                                            .schedule_report(TlsEvent {
+                                                policy: tlsa.into(),
+                                                domain: domain.to_string(),
+                                                failure: FailureDetails::new(
+                                                    ResultType::TlsaInvalid,
+                                                )
                                                 .with_receiving_mx_hostname(envelope.mx)
                                                 .with_failure_reason_code("Invalid TLSA record.")
                                                 .into(),
-                                            tls_record: tls_report.record.clone(),
-                                            interval: tls_report.interval,
-                                            span_id: message.span_id,
-                                        })
-                                        .await;
+                                                tls_record: tls_report.record.clone(),
+                                                interval: tls_report.interval,
+                                                span_id: message.span_id,
+                                            })
+                                            .await;
+                                    }
+
+                                    if strict {
+                                        last_status = Status::PermanentFailure(ErrorDetails {
+                                            entity: envelope.mx.into(),
+                                            details: Error::DaneError(
+                                                "No valid TLSA records were found".into(),
+                                            ),
+                                        });
+                                        continue 'next_host;
+                                    }
+                                    None
                                 }
+                            }
+                            Ok(None) => {
+                                trc::event!(
+                                    Dane(DaneEvent::TlsaRecordNotDnssecSigned),
+                                    SpanId = message.span_id,
+                                    Domain = domain.to_string(),
+                                    Hostname = envelope.mx.to_string(),
+                                    Strict = strict,
+                                    Elapsed = time.elapsed(),
+                                );
 
                                 if strict {
-                                    last_status = Status::PermanentFailure(ErrorDetails {
-                                        entity: envelope.mx.into(),
-                                        details: Error::DaneError(
-                                            "No valid TLSA records were found".into(),
-                                        ),
-                                    });
-                                    continue 'next_host;
-                                }
-                                None
-                            }
-                        }
-                        Ok(None) => {
-                            trc::event!(
-                                Dane(DaneEvent::TlsaRecordNotDnssecSigned),
-                                SpanId = message.span_id,
-                                Domain = domain.to_string(),
-                                Hostname = envelope.mx.to_string(),
-                                Strict = strict,
-                                Elapsed = time.elapsed(),
-                            );
-
-                            if strict {
-                                // Report DANE required
-                                if let Some(tls_report) = &tls_report {
-                                    server
-                                        .schedule_report(TlsEvent {
-                                            policy: PolicyType::Tlsa(None),
-                                            domain: domain.to_string(),
-                                            failure: FailureDetails::new(ResultType::DaneRequired)
-                                                .with_receiving_mx_hostname(envelope.mx)
-                                                .with_failure_reason_code(
-                                                    "No TLSA DNSSEC records found.",
-                                                )
-                                                .into(),
-                                            tls_record: tls_report.record.clone(),
-                                            interval: tls_report.interval,
-                                            span_id: message.span_id,
-                                        })
-                                        .await;
-                                }
-
-                                last_status = Status::PermanentFailure(ErrorDetails {
-                                    entity: envelope.mx.into(),
-                                    details: Error::DaneError(
-                                        "No TLSA DNSSEC records found".into(),
-                                    ),
-                                });
-                                continue 'next_host;
-                            }
-                            None
-                        }
-                        Err(err) => {
-                            let not_found = matches!(&err, mail_auth::Error::DnsRecordNotFound(_));
-
-                            if not_found {
-                                trc::event!(
-                                    Dane(DaneEvent::TlsaRecordNotFound),
-                                    SpanId = message.span_id,
-                                    Domain = domain.to_string(),
-                                    Hostname = envelope.mx.to_string(),
-                                    Strict = strict,
-                                    Elapsed = time.elapsed(),
-                                );
-                            } else {
-                                trc::event!(
-                                    Dane(DaneEvent::TlsaRecordFetchError),
-                                    SpanId = message.span_id,
-                                    Domain = domain.to_string(),
-                                    Hostname = envelope.mx.to_string(),
-                                    CausedBy = trc::Error::from(err.clone()),
-                                    Strict = strict,
-                                    Elapsed = time.elapsed(),
-                                );
-                            }
-
-                            if strict {
-                                last_status = if not_found {
                                     // Report DANE required
                                     if let Some(tls_report) = &tls_report {
                                         server
@@ -812,7 +801,7 @@ impl QueuedMessage {
                                                 )
                                                 .with_receiving_mx_hostname(envelope.mx)
                                                 .with_failure_reason_code(
-                                                    "No TLSA records found for MX.",
+                                                    "No TLSA DNSSEC records found.",
                                                 )
                                                 .into(),
                                                 tls_record: tls_report.record.clone(),
@@ -822,16 +811,76 @@ impl QueuedMessage {
                                             .await;
                                     }
 
-                                    Status::PermanentFailure(ErrorDetails {
+                                    last_status = Status::PermanentFailure(ErrorDetails {
                                         entity: envelope.mx.into(),
-                                        details: Error::DaneError("No TLSA records found".into()),
-                                    })
-                                } else {
-                                    Status::from_mail_auth_error(envelope.mx, err)
-                                };
-                                continue 'next_host;
+                                        details: Error::DaneError(
+                                            "No TLSA DNSSEC records found".into(),
+                                        ),
+                                    });
+                                    continue 'next_host;
+                                }
+                                None
                             }
-                            None
+                            Err(err) => {
+                                let not_found =
+                                    matches!(&err, mail_auth::Error::DnsRecordNotFound(_));
+
+                                if not_found {
+                                    trc::event!(
+                                        Dane(DaneEvent::TlsaRecordNotFound),
+                                        SpanId = message.span_id,
+                                        Domain = domain.to_string(),
+                                        Hostname = envelope.mx.to_string(),
+                                        Strict = strict,
+                                        Elapsed = time.elapsed(),
+                                    );
+
+                                    if strict {
+                                        // Report DANE required
+                                        if let Some(tls_report) = &tls_report {
+                                            server
+                                                .schedule_report(TlsEvent {
+                                                    policy: PolicyType::Tlsa(None),
+                                                    domain: domain.to_string(),
+                                                    failure: FailureDetails::new(
+                                                        ResultType::DaneRequired,
+                                                    )
+                                                    .with_receiving_mx_hostname(envelope.mx)
+                                                    .with_failure_reason_code(
+                                                        "No TLSA records found for MX.",
+                                                    )
+                                                    .into(),
+                                                    tls_record: tls_report.record.clone(),
+                                                    interval: tls_report.interval,
+                                                    span_id: message.span_id,
+                                                })
+                                                .await;
+                                        }
+
+                                        last_status = Status::PermanentFailure(ErrorDetails {
+                                            entity: envelope.mx.into(),
+                                            details: Error::DaneError(
+                                                "No TLSA records found".into(),
+                                            ),
+                                        });
+                                        continue 'next_host;
+                                    }
+                                    None
+                                } else {
+                                    trc::event!(
+                                        Dane(DaneEvent::TlsaRecordFetchError),
+                                        SpanId = message.span_id,
+                                        Domain = domain.to_string(),
+                                        Hostname = envelope.mx.to_string(),
+                                        CausedBy = trc::Error::from(err.clone()),
+                                        Strict = strict,
+                                        Elapsed = time.elapsed(),
+                                    );
+
+                                    last_status = Status::from_mail_auth_error(envelope.mx, err);
+                                    continue 'next_host;
+                                }
+                            }
                         }
                     }
                 } else {
@@ -948,10 +997,9 @@ impl QueuedMessage {
                         || (message.message.flags & MAIL_REQUIRETLS) != 0
                         || mta_sts_policy.is_some()
                         || dane_policy.is_some();
-                    // As per RFC7671 Section 5.1, DANE-EE(3) allows name mismatch
                     let tls_connector = if tls_strategy.allow_invalid_certs
                         || remote_host.allow_invalid_certs()
-                        || dane_policy.as_ref().is_some_and(|t| t.has_end_entities)
+                        || dane_policy.is_some()
                     {
                         &server.inner.data.smtp_connectors.dummy_verify
                     } else {
@@ -1040,6 +1088,7 @@ impl QueuedMessage {
                                         && let Err(status) = dane_policy.verify(
                                             message.span_id,
                                             envelope.mx,
+                                            &[envelope.mx, domain],
                                             smtp_client.tls_connection().peer_certificates(),
                                         )
                                     {

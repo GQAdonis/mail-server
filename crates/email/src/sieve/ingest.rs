@@ -145,6 +145,7 @@ impl SieveScriptIngest for Server {
 
         let mut do_discard = false;
         let mut do_deliver = false;
+        let mut do_redirect = false;
 
         let mut reject_reason = None;
         let mut messages: Vec<SieveMessage> = vec![SieveMessage {
@@ -412,6 +413,7 @@ impl SieveScriptIngest for Server {
                                     recipients,
                                     message: message.raw_message.to_vec(),
                                 });
+                                do_redirect = true;
                             } else {
                                 trc::event!(
                                     Sieve(SieveEvent::MessageTooLarge),
@@ -487,7 +489,7 @@ impl SieveScriptIngest for Server {
         }
 
         // Fail-safe, no discard and no keep seen, assume that something went wrong and file anyway.
-        if !do_deliver && !do_discard {
+        if !do_deliver && !do_discard && !do_redirect {
             messages[0].file_into.push(INBOX_ID);
         }
 
@@ -609,7 +611,7 @@ impl SieveScriptIngest for Server {
                 account_id,
                 Collection::SieveScript,
                 SieveField::Name,
-                name.as_bytes(),
+                name.to_lowercase().as_bytes(),
             )
             .await
             .caused_by(trc::location!())?

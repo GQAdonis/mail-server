@@ -48,6 +48,7 @@ async fn acme_management(server: &Server, task: &TaskDomainManagement) -> trc::R
             Err(err) => match err {
                 AcmeError::Crypto(_)
                 | AcmeError::Invalid(_)
+                | AcmeError::NotDue(_)
                 | AcmeError::ChallengeNotSupported { .. }
                 | AcmeError::OrderInvalid(_)
                 | AcmeError::Json(_)

@@ -22,6 +22,7 @@ pub trait DnsCache {
     fn ptr_add(&self, name: IpAddr, value: Vec<String>, valid_until: std::time::Instant);
     fn mx_add(&self, name: impl ToFqdn, value: Vec<MX>, valid_until: std::time::Instant);
     fn tlsa_add(&self, name: impl ToFqdn, value: Arc<Tlsa>, valid_until: std::time::Instant);
+    fn dnssec_add(&self, name: impl ToFqdn, secure: bool, valid_until: std::time::Instant);
 }
 
 impl DnsCache for Server {
@@ -81,5 +82,12 @@ impl DnsCache for Server {
             .cache
             .dns_tlsa
             .insert_with_expiry(name.to_fqdn(), value, valid_until);
+    }
+
+    fn dnssec_add(&self, name: impl ToFqdn, secure: bool, valid_until: std::time::Instant) {
+        self.inner
+            .cache
+            .dns_dnssec
+            .insert_with_expiry(name.to_fqdn(), secure, valid_until);
     }
 }

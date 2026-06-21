@@ -57,6 +57,10 @@ pub struct AcmeProvider {
     pub max_retries: i64,
     #[serde(rename = "memberTenantId")]
     pub member_tenant_id: Option<Id>,
+    #[serde(rename = "preferredChain")]
+    pub preferred_chain: Option<String>,
+    #[serde(rename = "reuseKey")]
+    pub reuse_key: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2928,6 +2932,8 @@ pub struct Http {
     pub response_headers: VecMap<String, String>,
     #[serde(rename = "useXForwarded")]
     pub use_x_forwarded: bool,
+    #[serde(rename = "redirectRoot")]
+    pub redirect_root: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

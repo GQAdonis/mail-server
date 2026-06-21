@@ -113,7 +113,8 @@ impl TestServerBuilder {
                     "running `STORE=<store_type> cargo test`"
                 )),
             &path,
-        );
+        )
+        .await;
         let store = Store::build(data_store).await.unwrap();
 
         store.create_tables().await.unwrap();

@@ -13,7 +13,10 @@ use common::{
     network::acme::account::acme_create_account, psl,
 };
 use directory::core::secret::hash_secret;
-use jmap_proto::error::set::{SetError, SetErrorType};
+use jmap_proto::{
+    error::set::{SetError, SetErrorType},
+    request::MaybeInvalid,
+};
 use jmap_tools::{JsonPointer, JsonPointerItem, Key};
 use rand::{Rng, distr::Alphanumeric, rng};
 use registry::{
@@ -39,7 +42,7 @@ use store::{
     write::{AnyKey, BatchBuilder},
 };
 use types::id::Id;
-use utils::is_valid_domain;
+use utils::{DomainPart, is_valid_domain};
 
 pub(crate) async fn bootstrap_get(
     mut get: RegistryGetResponse<'_>,
@@ -67,7 +70,7 @@ pub(crate) async fn bootstrap_get(
         }
     }
 
-    get.response.not_found.extend(ids);
+    get.response.not_found.extend(ids.map(MaybeInvalid::Value));
     Ok(get)
 }
 
@@ -121,8 +124,20 @@ pub(crate) async fn bootstrap_set(
         }
 
         // Validate domain name and hostname
-        let server_hostname = bootstrap.server_hostname.trim().to_lowercase();
-        let domain_name = bootstrap.default_domain.trim().to_lowercase();
+        let server_hostname = bootstrap
+            .server_hostname
+            .trim()
+            .to_lowercase()
+            .to_ascii_domain()
+            .map(|hostname| hostname.into_owned())
+            .unwrap_or_default();
+        let domain_name = bootstrap
+            .default_domain
+            .trim()
+            .to_lowercase()
+            .to_ascii_domain()
+            .map(|domain| domain.into_owned())
+            .unwrap_or_default();
         if !is_valid_domain(&server_hostname) {
             set.response.not_updated.append(
                 id,

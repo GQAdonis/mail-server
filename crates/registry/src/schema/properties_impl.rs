@@ -1046,6 +1046,7 @@ impl EnumImpl for Property {
             b"poolTimeoutWait" => Property::PoolTimeoutWait,
             b"poolWorkers" => Property::PoolWorkers,
             b"port" => Property::Port,
+            b"preferredChain" => Property::PreferredChain,
             b"prefix" => Property::Prefix,
             b"preserveIntermediates" => Property::PreserveIntermediates,
             b"priority" => Property::Priority,
@@ -1100,6 +1101,7 @@ impl EnumImpl for Property {
             b"recipients" => Property::Recipients,
             b"records" => Property::Records,
             b"recurrenceId" => Property::RecurrenceId,
+            b"redirectRoot" => Property::RedirectRoot,
             b"redirectUris" => Property::RedirectUris,
             b"refresh" => Property::Refresh,
             b"refreshTokenExpiry" => Property::RefreshTokenExpiry,
@@ -1139,6 +1141,7 @@ impl EnumImpl for Property {
             b"retryCount" => Property::RetryCount,
             b"retryDue" => Property::RetryDue,
             b"returnPath" => Property::ReturnPath,
+            b"reuseKey" => Property::ReuseKey,
             b"reverseIpVerify" => Property::ReverseIpVerify,
             b"rewrite" => Property::Rewrite,
             b"roleIds" => Property::RoleIds,
@@ -1961,6 +1964,7 @@ impl EnumImpl for Property {
             Property::PoolTimeoutWait => "poolTimeoutWait",
             Property::PoolWorkers => "poolWorkers",
             Property::Port => "port",
+            Property::PreferredChain => "preferredChain",
             Property::Prefix => "prefix",
             Property::PreserveIntermediates => "preserveIntermediates",
             Property::Priority => "priority",
@@ -2015,6 +2019,7 @@ impl EnumImpl for Property {
             Property::Recipients => "recipients",
             Property::Records => "records",
             Property::RecurrenceId => "recurrenceId",
+            Property::RedirectRoot => "redirectRoot",
             Property::RedirectUris => "redirectUris",
             Property::Refresh => "refresh",
             Property::RefreshTokenExpiry => "refreshTokenExpiry",
@@ -2054,6 +2059,7 @@ impl EnumImpl for Property {
             Property::RetryCount => "retryCount",
             Property::RetryDue => "retryDue",
             Property::ReturnPath => "returnPath",
+            Property::ReuseKey => "reuseKey",
             Property::ReverseIpVerify => "reverseIpVerify",
             Property::Rewrite => "rewrite",
             Property::RoleIds => "roleIds",
@@ -2880,6 +2886,7 @@ impl EnumImpl for Property {
             481 => Some(Property::PoolTimeoutWait),
             657 => Some(Property::PoolWorkers),
             299 => Some(Property::Port),
+            910 => Some(Property::PreferredChain),
             856 => Some(Property::Prefix),
             306 => Some(Property::PreserveIntermediates),
             483 => Some(Property::Priority),
@@ -2934,6 +2941,7 @@ impl EnumImpl for Property {
             484 => Some(Property::Recipients),
             256 => Some(Property::Records),
             805 => Some(Property::RecurrenceId),
+            911 => Some(Property::RedirectRoot),
             605 => Some(Property::RedirectUris),
             419 => Some(Property::Refresh),
             617 => Some(Property::RefreshTokenExpiry),
@@ -2973,6 +2981,7 @@ impl EnumImpl for Property {
             640 => Some(Property::RetryCount),
             641 => Some(Property::RetryDue),
             635 => Some(Property::ReturnPath),
+            912 => Some(Property::ReuseKey),
             692 => Some(Property::ReverseIpVerify),
             565 => Some(Property::Rewrite),
             193 => Some(Property::RoleIds),
@@ -3155,7 +3164,7 @@ impl EnumImpl for Property {
         }
     }
 
-    const COUNT: usize = 910;
+    const COUNT: usize = 913;
 }
 
 impl serde::Serialize for Property {

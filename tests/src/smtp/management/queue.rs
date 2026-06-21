@@ -87,7 +87,7 @@ async fn manage_queue() {
         .await;
     let queue_id = admin
         .registry_create_object(MtaVirtualQueue {
-            name: "default".into(),
+            name: "myqueue".into(),
             threads_per_node: 25,
             description: None,
         })

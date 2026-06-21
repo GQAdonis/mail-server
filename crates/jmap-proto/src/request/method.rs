@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use crate::request::capability::Capability;
 use registry::{
     schema::prelude::{OBJ_SINGLETON, ObjectType},
     types::EnumImpl,
@@ -40,6 +41,31 @@ pub enum MethodObject {
     ParticipantIdentity,
     ShareNotification,
     Registry(ObjectType),
+}
+
+impl MethodObject {
+    pub fn capability(&self) -> Capability {
+        match self {
+            MethodObject::Email
+            | MethodObject::Mailbox
+            | MethodObject::Thread
+            | MethodObject::SearchSnippet => Capability::Mail,
+            MethodObject::Core | MethodObject::PushSubscription => Capability::Core,
+            MethodObject::Blob => Capability::Blob,
+            MethodObject::Identity | MethodObject::EmailSubmission => Capability::Submission,
+            MethodObject::VacationResponse => Capability::VacationResponse,
+            MethodObject::SieveScript => Capability::Sieve,
+            MethodObject::Principal | MethodObject::ShareNotification => Capability::Principals,
+            MethodObject::Quota => Capability::Quota,
+            MethodObject::Calendar
+            | MethodObject::CalendarEvent
+            | MethodObject::CalendarEventNotification
+            | MethodObject::ParticipantIdentity => Capability::Calendars,
+            MethodObject::AddressBook | MethodObject::ContactCard => Capability::Contacts,
+            MethodObject::FileNode => Capability::FileNode,
+            MethodObject::Registry(_) => Capability::Stalwart,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

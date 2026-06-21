@@ -6,7 +6,7 @@
 
 use common::{
     Server,
-    config::smtp::resolver::{Tlsa, TlsaEntry},
+    config::smtp::resolver::{Tlsa, TlsaEntry, TlsaMatching},
 };
 use mail_auth::{
     common::resolver::ToFqdn,
@@ -61,6 +61,17 @@ impl TlsaLookup for Server {
                         CertUsage::DaneTa => false,
                         _ => continue,
                     };
+                    let matching = match tlsa.matching {
+                        Matching::Raw => TlsaMatching::Full,
+                        Matching::Sha256 => TlsaMatching::Sha256,
+                        Matching::Sha512 => TlsaMatching::Sha512,
+                        _ => continue,
+                    };
+                    let is_spki = match tlsa.selector {
+                        Selector::Spki => true,
+                        Selector::Full => false,
+                        _ => continue,
+                    };
                     if is_end_entity {
                         has_end_entities = true;
                     } else {
@@ -68,16 +79,8 @@ impl TlsaLookup for Server {
                     }
                     entries.push(TlsaEntry {
                         is_end_entity,
-                        is_sha256: match tlsa.matching {
-                            Matching::Sha256 => true,
-                            Matching::Sha512 => false,
-                            _ => continue,
-                        },
-                        is_spki: match tlsa.selector {
-                            Selector::Spki => true,
-                            Selector::Full => false,
-                            _ => continue,
-                        },
+                        is_spki,
+                        matching,
                         data: tlsa.cert_data.clone(),
                     });
                 } else {
@@ -104,4 +107,10 @@ impl TlsaLookup for Server {
             Ok(None)
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DnssecStatus {
+    Secure,
+    Insecure,
 }

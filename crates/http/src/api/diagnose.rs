@@ -18,7 +18,7 @@ use smtp::outbound::{
     client::{SmtpClient, StartTlsResult},
     dane::{dnssec::TlsaLookup, verify::TlsaVerify},
     error::ClientError,
-    lookup::{DnsLookup, ToNextHop},
+    lookup::{DnsLookup, SourceIp, ToNextHop},
     mta_sts::{lookup::MtaStsLookup, verify::VerifyPolicy},
 };
 use std::{
@@ -218,6 +218,7 @@ async fn delivery_diagnose(
     };
 
     let local_host = &server.core.network.server_name;
+    let conn_strategy = server.get_connection_or_default("default", 0);
 
     tx.send(DeliveryStage::MxLookupStart {
         domain: domain.to_string(),
@@ -472,7 +473,13 @@ async fn delivery_diagnose(
                 .await?;
 
             let now = Instant::now();
-            match SmtpClient::connect(SocketAddr::new(remote_ip, 25), timeout, 0).await {
+            let connect = if let Some(ip_host) = conn_strategy.source_ip(remote_ip.is_ipv4()) {
+                SmtpClient::connect_using(ip_host.ip, SocketAddr::new(remote_ip, 25), timeout, 0)
+                    .await
+            } else {
+                SmtpClient::connect(SocketAddr::new(remote_ip, 25), timeout, 0).await
+            };
+            match connect {
                 Ok(mut client) => {
                     tx.send(DeliveryStage::ConnectionSuccess {
                         elapsed: now.elapsed_ms(),
@@ -586,6 +593,7 @@ async fn delivery_diagnose(
                         if let Err(err) = dane_policy.verify(
                             0,
                             hostname,
+                            &[hostname],
                             client.tls_connection().peer_certificates(),
                         ) {
                             tx.send(DeliveryStage::DaneVerifyError {

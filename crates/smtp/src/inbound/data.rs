@@ -769,7 +769,10 @@ impl<T: SessionStream> Session<T> {
             .map_or(0, |d| d.as_secs());
         let mut message = Message {
             created,
-            return_path: mail_from.address.to_lowercase_domain().into_boxed_str(),
+            return_path: mail_from
+                .address
+                .to_lowercase_address(false)
+                .into_boxed_str(),
             recipients: Vec::with_capacity(rcpt_to.len()),
             flags: mail_from.flags,
             priority: self.data.priority,

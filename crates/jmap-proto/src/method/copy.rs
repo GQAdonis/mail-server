@@ -75,7 +75,7 @@ pub struct CopyBlobResponse {
 
     #[serde(rename = "notCopied")]
     #[serde(skip_serializing_if = "VecMap::is_empty")]
-    pub not_copied: VecMap<BlobId, SetError<BlobProperty>>,
+    pub not_copied: VecMap<MaybeInvalid<BlobId>, SetError<BlobProperty>>,
 }
 
 impl<'de, T: JmapObject> DeserializeArguments<'de> for CopyRequest<'de, T> {
@@ -85,13 +85,13 @@ impl<'de, T: JmapObject> DeserializeArguments<'de> for CopyRequest<'de, T> {
     {
         hashify::fnc_map!(key.as_bytes(),
             b"accountId" => {
-                self.account_id = map.next_value()?;
+                self.account_id = crate::request::deserialize_account_id(map)?;
             },
             b"ifInState" => {
                 self.if_in_state = map.next_value()?;
             },
             b"fromAccountId" => {
-                self.from_account_id = map.next_value()?;
+                self.from_account_id = crate::request::deserialize_account_id(map)?;
             },
             b"ifFromInState" => {
                 self.if_from_in_state = map.next_value()?;
@@ -121,10 +121,10 @@ impl<'de> DeserializeArguments<'de> for CopyBlobRequest {
     {
         hashify::fnc_map!(key.as_bytes(),
             b"accountId" => {
-                self.account_id = map.next_value()?;
+                self.account_id = crate::request::deserialize_account_id(map)?;
             },
             b"fromAccountId" => {
-                self.from_account_id = map.next_value()?;
+                self.from_account_id = crate::request::deserialize_account_id(map)?;
             },
             b"blobIds" => {
                 self.blob_ids = map.next_value()?;

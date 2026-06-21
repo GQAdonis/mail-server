@@ -27,14 +27,13 @@ use x509_parser::prelude::{GeneralName, ParsedExtension};
 const HOSTNAMES: &[&str] = &["mta-sts", "ua-auto-config", "autoconfig", "autodiscover"];
 
 impl AcmeRequestBuilder {
-    pub async fn renew(
+    pub fn build_domains(
         &self,
         server: &Server,
         domain: &str,
         hostnames: &[String],
-        dns_parameters: Option<AcmeDnsParameters>,
-    ) -> AcmeResult<PemCert> {
-        let domains = if hostnames.is_empty() {
+    ) -> Vec<String> {
+        if hostnames.is_empty() {
             if matches!(
                 self.challenge,
                 ChallengeType::Dns01 | ChallengeType::DnsPersist01
@@ -87,14 +86,28 @@ impl AcmeRequestBuilder {
                     }
                 })
                 .collect()
-        };
+        }
+    }
 
+    pub async fn renew(
+        &self,
+        server: &Server,
+        domains: Vec<String>,
+        reuse_key_pem: Option<String>,
+        dns_parameters: Option<AcmeDnsParameters>,
+    ) -> AcmeResult<PemCert> {
         let mut params = CertificateParams::new(domains.clone()).map_err(|err| {
             AcmeError::Crypto(format!("Failed to create certificate params: {}", err))
         })?;
         params.distinguished_name = DistinguishedName::new();
-        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .map_err(|err| AcmeError::Crypto(format!("Failed to generate key pair: {}", err)))?;
+        let key_pair = match reuse_key_pem {
+            Some(pem) => KeyPair::from_pem(&pem).map_err(|err| {
+                AcmeError::Crypto(format!("Failed to load private key for reuse: {}", err))
+            })?,
+            None => KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).map_err(|err| {
+                AcmeError::Crypto(format!("Failed to generate key pair: {}", err))
+            })?,
+        };
         let response = self.new_order(domains.clone()).await?;
         let order_url = response.location;
         let mut order = response.body;
@@ -172,7 +185,7 @@ impl AcmeRequestBuilder {
                         Hostname = domains.as_slice(),
                     );
 
-                    let certificate = self.certificate(certificate).await?;
+                    let certificate = self.select_certificate(&domains, certificate).await?;
 
                     return Ok(PemCert {
                         certificate,
@@ -335,82 +348,177 @@ impl AcmeRequestBuilder {
             max_retries: self.max_retries,
         })
     }
+
+    async fn select_certificate(&self, domains: &[String], url: String) -> AcmeResult<String> {
+        let response = self.certificate(url).await?;
+        let Some(preferred) = self.preferred_chain.as_deref() else {
+            return Ok(response.body);
+        };
+
+        if chain_matches(&response.body, preferred) {
+            return Ok(response.body);
+        }
+
+        for alternate in &response.alternates {
+            match self.certificate(alternate).await {
+                Ok(alternate) if chain_matches(&alternate.body, preferred) => {
+                    return Ok(alternate.body);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    trc::event!(
+                        Acme(AcmeEvent::ProcessCert),
+                        Url = alternate.to_string(),
+                        Hostname = domains,
+                        Reason = err.to_string(),
+                    );
+                }
+            }
+        }
+
+        trc::event!(
+            Acme(AcmeEvent::ProcessCert),
+            Hostname = domains,
+            Reason = format!(
+                "Preferred certificate chain '{preferred}' not offered by the CA; using the default chain",
+            ),
+        );
+
+        Ok(response.body)
+    }
+}
+
+fn chain_matches(pem_chain: &str, preferred: &str) -> bool {
+    let Ok(blocks) = pem::parse_many(pem_chain) else {
+        return false;
+    };
+    let Some(top) = blocks.last() else {
+        return false;
+    };
+    let Ok((_, cert)) = parse_x509_certificate(top.contents()) else {
+        return false;
+    };
+    cert.issuer()
+        .iter_common_name()
+        .filter_map(|cn| cn.as_str().ok())
+        .any(|cn| cn == preferred)
 }
 
 impl ParsedCert {
     pub fn parse(certificate: impl AsRef<[u8]>) -> AcmeResult<ParsedCert> {
-        pem::parse_many(certificate)
-            .map_err(|err| AcmeError::Crypto(format!("Failed to parse PEM: {}", err)))
-            .and_then(|pems| {
-                pems.into_iter()
-                    .next()
-                    .ok_or_else(|| AcmeError::Crypto("No certificates found in PEM".to_string()))
-            })
-            .and_then(|der| {
-                parse_x509_certificate(der.contents())
-                    .map_err(|err| {
-                        AcmeError::Crypto(format!("Failed to parse X.509 certificate: {}", err))
-                    })
-                    .and_then(|(_, cert)| {
-                        // Add CNs and SANs to the list of names
-                        let mut names: BTreeSet<String> = BTreeSet::new();
-                        for name in cert.subject().iter_common_name() {
-                            if let Ok(name) = name.as_str() {
-                                names.insert(name.into());
-                            }
-                        }
-                        for ext in cert.extensions() {
-                            if let ParsedExtension::SubjectAlternativeName(san) =
-                                ext.parsed_extension()
-                            {
-                                for name in &san.general_names {
-                                    let name = match name {
-                                        GeneralName::DNSName(name) => (*name).into(),
-                                        GeneralName::IPAddress(ip) => match ip.len() {
-                                            4 => Ipv4Addr::from(<[u8; 4]>::try_from(*ip).unwrap())
-                                                .to_string(),
-                                            16 => {
-                                                Ipv6Addr::from(<[u8; 16]>::try_from(*ip).unwrap())
-                                                    .to_string()
-                                            }
-                                            _ => continue,
-                                        },
-                                        _ => {
-                                            continue;
-                                        }
-                                    };
-                                    names.insert(name);
-                                }
-                            }
-                        }
+        let der = pem::parse_many(certificate)
+            .map_err(|err| AcmeError::Crypto(format!("Failed to parse PEM: {}", err)))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AcmeError::Crypto("No certificates found in PEM".to_string()))?;
+        Self::parse_der(der.contents())
+    }
 
-                        Ok(ParsedCert {
-                            sans: names.into_iter().collect(),
-                            issuer: cert.tbs_certificate.issuer().to_string(),
-                            valid_not_before: Utc
-                                .timestamp_opt(
-                                    cert.tbs_certificate.validity().not_before.timestamp(),
-                                    0,
-                                )
-                                .single()
-                                .ok_or_else(|| {
-                                    AcmeError::Crypto(
-                                        "Certificate not_before time is out of range".to_string(),
-                                    )
-                                })?,
-                            valid_not_after: Utc
-                                .timestamp_opt(
-                                    cert.tbs_certificate.validity().not_after.timestamp(),
-                                    0,
-                                )
-                                .single()
-                                .ok_or_else(|| {
-                                    AcmeError::Crypto(
-                                        "Certificate not_after time is out of range".to_string(),
-                                    )
-                                })?,
-                        })
-                    })
+    pub fn parse_der(der: &[u8]) -> AcmeResult<ParsedCert> {
+        parse_x509_certificate(der)
+            .map_err(|err| AcmeError::Crypto(format!("Failed to parse X.509 certificate: {}", err)))
+            .and_then(|(_, cert)| {
+                // Add CNs and SANs to the list of names
+                let mut names: BTreeSet<String> = BTreeSet::new();
+                for name in cert.subject().iter_common_name() {
+                    if let Ok(name) = name.as_str() {
+                        names.insert(name.into());
+                    }
+                }
+                for ext in cert.extensions() {
+                    if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
+                        for name in &san.general_names {
+                            let name = match name {
+                                GeneralName::DNSName(name) => (*name).into(),
+                                GeneralName::IPAddress(ip) => match ip.len() {
+                                    4 => Ipv4Addr::from(<[u8; 4]>::try_from(*ip).unwrap())
+                                        .to_string(),
+                                    16 => Ipv6Addr::from(<[u8; 16]>::try_from(*ip).unwrap())
+                                        .to_string(),
+                                    _ => continue,
+                                },
+                                _ => {
+                                    continue;
+                                }
+                            };
+                            names.insert(name);
+                        }
+                    }
+                }
+
+                Ok(ParsedCert {
+                    sans: names.into_iter().collect(),
+                    issuer: cert.tbs_certificate.issuer().to_string(),
+                    valid_not_before: Utc
+                        .timestamp_opt(cert.tbs_certificate.validity().not_before.timestamp(), 0)
+                        .single()
+                        .ok_or_else(|| {
+                            AcmeError::Crypto(
+                                "Certificate not_before time is out of range".to_string(),
+                            )
+                        })?,
+                    valid_not_after: Utc
+                        .timestamp_opt(cert.tbs_certificate.validity().not_after.timestamp(), 0)
+                        .single()
+                        .ok_or_else(|| {
+                            AcmeError::Crypto(
+                                "Certificate not_after time is out of range".to_string(),
+                            )
+                        })?,
+                })
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chain_matches;
+    use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256};
+
+    fn self_signed_pem(common_name: &str) -> String {
+        let mut params = CertificateParams::new(vec!["host.example".to_string()]).unwrap();
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, common_name);
+        params.distinguished_name = dn;
+        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        params.self_signed(&key_pair).unwrap().pem()
+    }
+
+    #[test]
+    fn matches_top_certificate_issuer() {
+        let chain = self_signed_pem("ISRG Root X1");
+        assert!(chain_matches(&chain, "ISRG Root X1"));
+    }
+
+    #[test]
+    fn match_is_case_sensitive() {
+        let chain = self_signed_pem("ISRG Root X1");
+        assert!(!chain_matches(&chain, "isrg root x1"));
+    }
+
+    #[test]
+    fn match_is_exact_not_substring() {
+        let chain = self_signed_pem("ISRG Root X10");
+        assert!(!chain_matches(&chain, "ISRG Root X1"));
+    }
+
+    #[test]
+    fn does_not_match_unrelated_issuer() {
+        let chain = self_signed_pem("ISRG Root X2");
+        assert!(!chain_matches(&chain, "ISRG Root X1"));
+    }
+
+    #[test]
+    fn uses_topmost_certificate_not_leaf() {
+        let leaf = self_signed_pem("Leaf Issuer");
+        let top = self_signed_pem("ISRG Root X1");
+        let chain = format!("{leaf}{top}");
+        assert!(chain_matches(&chain, "ISRG Root X1"));
+        assert!(!chain_matches(&chain, "Leaf Issuer"));
+    }
+
+    #[test]
+    fn rejects_unparseable_chain() {
+        assert!(!chain_matches("not a pem", "ISRG Root X1"));
     }
 }

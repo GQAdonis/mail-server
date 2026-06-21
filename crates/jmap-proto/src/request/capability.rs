@@ -97,6 +97,12 @@ pub enum Capability {
 #[repr(transparent)]
 pub struct CapabilityIds(pub u32);
 
+impl CapabilityIds {
+    pub fn contains(&self, capability: Capability) -> bool {
+        self.0 & capability as u32 != 0
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(untagged)]
 #[allow(dead_code)]

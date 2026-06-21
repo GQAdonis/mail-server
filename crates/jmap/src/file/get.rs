@@ -40,7 +40,7 @@ impl FileNodeGet for Server {
         mut request: GetRequest<file_node::FileNode>,
         access_token: &AccessToken,
     ) -> trc::Result<GetResponse<file_node::FileNode>> {
-        let ids = request.unwrap_ids(self.core.jmap.get_max_objects)?;
+        let (ids, not_found_ids) = request.unwrap_ids(self.core.jmap.get_max_objects)?;
         let properties = request.unwrap_properties(&[
             FileNodeProperty::Id,
             FileNodeProperty::ParentId,
@@ -112,16 +112,16 @@ impl FileNodeGet for Server {
         }
         let mut response = GetResponse {
             account_id: request.account_id.into(),
-            state: cache.get_state(true).into(),
+            state: cache.get_state(false).into(),
             list: Vec::with_capacity(ids.len()),
-            not_found: vec![],
+            not_found: not_found_ids,
         };
 
         for id in ids {
             // Obtain the file_node object
             let document_id = id.document_id();
             if !file_node_ids.contains(document_id) {
-                response.not_found.push(id);
+                response.push_not_found(id);
                 continue;
             }
             let _file_node = if let Some(file_node) = self
@@ -135,7 +135,7 @@ impl FileNodeGet for Server {
             {
                 file_node
             } else {
-                response.not_found.push(id);
+                response.push_not_found(id);
                 continue;
             };
             let file_node = _file_node

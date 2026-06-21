@@ -170,31 +170,6 @@ impl OAuthConfig {
     }
 }
 
-impl Default for OAuthConfig {
-    fn default() -> Self {
-        Self {
-            oauth_key: Default::default(),
-            oauth_expiry_user_code: Default::default(),
-            oauth_expiry_auth_code: Default::default(),
-            oauth_expiry_token: Default::default(),
-            oauth_expiry_refresh_token: Default::default(),
-            oauth_expiry_refresh_token_renew: Default::default(),
-            oauth_max_auth_attempts: Default::default(),
-            oidc_expiry_id_token: Default::default(),
-            allow_anonymous_client_registration: Default::default(),
-            require_client_authentication: Default::default(),
-            oidc_signing_secret: Secret::Bytes("secret".to_string().into_bytes()),
-            oidc_signature_algorithm: SignatureAlgorithm::HS256,
-            oidc_jwks: Resource {
-                content_type: "application/json".into(),
-                contents: serde_json::to_string(&JWKSet::<()> { keys: vec![] })
-                    .unwrap_or_default()
-                    .into_bytes(),
-            },
-        }
-    }
-}
-
 async fn parse_rsa_key(auth: &OidcProvider) -> Result<(Secret, AlgorithmParameters), String> {
     let rsa_key_pair = build_rsa_keypair(auth.signature_key.secret().await?.as_ref())?;
 

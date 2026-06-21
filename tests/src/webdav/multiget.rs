@@ -62,9 +62,10 @@ pub async fn test(test: &TestServer) {
                     .get(DavProperty::WebDav(WebDavProperty::GetETag))
                     .with_values([etag.as_str()]);
                 props
-                    .get(DavProperty::CardDav(CardDavProperty::AddressData(
-                        Default::default(),
-                    )))
+                    .get(DavProperty::CardDav(CardDavProperty::AddressData {
+                        properties: Default::default(),
+                        version: None,
+                    }))
                     .with_values([contents.as_str()]);
             }
         }

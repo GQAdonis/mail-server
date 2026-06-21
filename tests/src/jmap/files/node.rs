@@ -104,6 +104,7 @@ pub async fn test(test: &TestServer) {
          [
           "Blob/upload",
           {
+           "accountId": account.id_string(),
            "create": {
             "hello": {
              "data": [
@@ -119,6 +120,7 @@ pub async fn test(test: &TestServer) {
         [
           "FileNode/set",
           {
+            "accountId": account.id_string(),
             "create": {
               "i0": {
                 "name": "hello.txt",

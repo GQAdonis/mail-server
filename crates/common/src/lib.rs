@@ -201,6 +201,7 @@ pub struct Caches {
     pub dns_ipv4: CacheWithTtl<Box<str>, Arc<[Ipv4Addr]>>,
     pub dns_ipv6: CacheWithTtl<Box<str>, Arc<[Ipv6Addr]>>,
     pub dns_tlsa: CacheWithTtl<Box<str>, Arc<Tlsa>>,
+    pub dns_dnssec: CacheWithTtl<Box<str>, bool>,
     pub dns_mta_sts: CacheWithTtl<Box<str>, Arc<Policy>>,
     pub dns_rbl: CacheWithTtl<Box<str>, Option<Arc<IpResolver>>>,
 

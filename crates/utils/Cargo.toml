@@ -1,6 +1,6 @@
 [package]
 name = "utils"
-version = "0.16.8"
+version = "0.16.10"
 edition = "2024"
 
 [dependencies]
@@ -31,6 +31,7 @@ blake3 = "1.3.3"
 http-body-util = "0.1.0"
 form_urlencoded = "1.1.0"
 psl = "2"
+idna = "1.0"
 quick_cache = "0.6.9"
 fast-float = "0.2.0"
 rkyv = { version = "0.8.10", features = ["little_endian"] }

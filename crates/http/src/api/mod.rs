@@ -328,7 +328,10 @@ impl UnauthorizedResponse for HttpResponse {
     fn unauthorized(include_realms: bool) -> Self {
         (if include_realms {
             HttpResponse::new(StatusCode::UNAUTHORIZED)
-                .with_header(header::WWW_AUTHENTICATE, "Bearer realm=\"Stalwart Server\"")
+                .with_header(
+                    header::WWW_AUTHENTICATE,
+                    "Bearer realm=\"Stalwart Server\", resource_metadata=\"/.well-known/oauth-protected-resource\"",
+                )
                 .with_header(header::WWW_AUTHENTICATE, "Basic realm=\"Stalwart Server\"")
         } else {
             HttpResponse::new(StatusCode::UNAUTHORIZED)

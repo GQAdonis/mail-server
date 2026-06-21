@@ -213,7 +213,13 @@ impl OpenIdDirectory {
                 .as_ref()
                 .and_then(|groups_claim| claims.get(groups_claim))
                 .map(extract_string_list)
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into_iter()
+                .map(|group| match &self.config.default_domain {
+                    Some(domain) if !group.contains('@') => format!("{group}@{domain}"),
+                    _ => group,
+                })
+                .collect(),
             description: self
                 .config
                 .claim_name

@@ -184,6 +184,11 @@ impl<K: Eq + Hash + CacheItemWeight, V: Clone + CacheItemWeight> CacheWithTtl<K,
     }
 
     #[inline(always)]
+    pub fn retain(&self, f: impl Fn(&K) -> bool) {
+        self.0.retain(|key, _| f(key));
+    }
+
+    #[inline(always)]
     pub fn clear(&self) {
         self.0.clear();
     }

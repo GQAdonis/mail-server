@@ -289,7 +289,7 @@ impl RegistryJsonPropertyPatch for AccountSettings {
 
 impl ObjectImpl for AcmeProvider {
     const FLAGS: u64 = OBJ_FILTER_TENANT;
-    const VERSION: u8 = 0;
+    const VERSION: u8 = 2;
     const OBJECT: ObjectType = ObjectType::AcmeProvider;
 
     fn validate(&self, errors: &mut Vec<ValidationError>) -> bool {
@@ -320,6 +320,11 @@ impl ObjectImpl for AcmeProvider {
                 errors.push(ValidationError::required(Property::MemberTenantId));
             }
         }
+        if let Some(value) = &self.preferred_chain {
+            if value.is_empty() {
+                errors.push(ValidationError::required(Property::PreferredChain));
+            }
+        }
         errors.len() == neb
     }
 
@@ -345,6 +350,8 @@ impl Pickle for AcmeProvider {
         self.renew_before.pickle(out);
         self.max_retries.pickle(out);
         self.member_tenant_id.pickle(out);
+        self.preferred_chain.pickle(out);
+        self.reuse_key.pickle(out);
     }
 
     fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
@@ -357,6 +364,12 @@ impl Pickle for AcmeProvider {
         this.renew_before = Pickle::unpickle(stream)?;
         this.max_retries = Pickle::unpickle(stream)?;
         this.member_tenant_id = Pickle::unpickle(stream)?;
+        if stream.version() >= 1 {
+            this.preferred_chain = Pickle::unpickle(stream)?;
+        }
+        if stream.version() >= 2 {
+            this.reuse_key = Pickle::unpickle(stream)?;
+        }
         Some(this)
     }
 }
@@ -372,13 +385,15 @@ impl Default for AcmeProvider {
             renew_before: AcmeRenewBefore::R23,
             max_retries: 10i64,
             member_tenant_id: Default::default(),
+            preferred_chain: Default::default(),
+            reuse_key: false,
         }
     }
 }
 
 impl IntoValue for AcmeProvider {
     fn into_value(self) -> JmapValue<'static> {
-        let mut map = jmap_tools::Map::with_capacity(10);
+        let mut map = jmap_tools::Map::with_capacity(12);
         map.insert_unchecked(Property::ChallengeType, self.challenge_type.into_value());
         map.insert_unchecked(Property::Contact, self.contact.into_value());
         map.insert_unchecked(Property::Directory, self.directory.into_value());
@@ -387,6 +402,8 @@ impl IntoValue for AcmeProvider {
         map.insert_unchecked(Property::RenewBefore, self.renew_before.into_value());
         map.insert_unchecked(Property::MaxRetries, self.max_retries.into_value());
         map.insert_unchecked(Property::MemberTenantId, self.member_tenant_id.into_value());
+        map.insert_unchecked(Property::PreferredChain, self.preferred_chain.into_value());
+        map.insert_unchecked(Property::ReuseKey, self.reuse_key.into_value());
         JmapValue::Object(map)
     }
 }
@@ -421,6 +438,10 @@ impl RegistryJsonPropertyPatch for AcmeProvider {
             Some(Property::MemberTenantId) => self
                 .member_tenant_id
                 .patch(pointer.assert_can_set_tenant()?, value),
+            Some(Property::PreferredChain) => self
+                .preferred_chain
+                .patch(pointer.with_validators(&[StringValidator::Trim]), value),
+            Some(Property::ReuseKey) => self.reuse_key.patch(pointer, value),
             Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
                 property: Property::Type,
                 value,
@@ -21189,7 +21210,7 @@ impl RegistryJsonPropertyPatch for GroupAccount {
 
 impl ObjectImpl for Http {
     const FLAGS: u64 = OBJ_SINGLETON;
-    const VERSION: u8 = 0;
+    const VERSION: u8 = 1;
     const OBJECT: ObjectType = ObjectType::Http;
 
     fn validate(&self, errors: &mut Vec<ValidationError>) -> bool {
@@ -21206,6 +21227,11 @@ impl ObjectImpl for Http {
         for value in value.values() {
             if value.is_empty() {
                 errors.push(ValidationError::required(Property::ResponseHeaders));
+            }
+        }
+        if let Some(value) = &self.redirect_root {
+            if value.is_empty() {
+                errors.push(ValidationError::required(Property::RedirectRoot));
             }
         }
         errors.len() == neb
@@ -21242,6 +21268,7 @@ impl Pickle for Http {
         self.use_permissive_cors.pickle(out);
         self.response_headers.pickle(out);
         self.use_x_forwarded.pickle(out);
+        self.redirect_root.pickle(out);
     }
 
     fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
@@ -21253,6 +21280,9 @@ impl Pickle for Http {
         this.use_permissive_cors = Pickle::unpickle(stream)?;
         this.response_headers = Pickle::unpickle(stream)?;
         this.use_x_forwarded = Pickle::unpickle(stream)?;
+        if stream.version() >= 1 {
+            this.redirect_root = Pickle::unpickle(stream)?;
+        }
         Some(this)
     }
 }
@@ -21276,13 +21306,14 @@ impl Default for Http {
             use_permissive_cors: false,
             response_headers: Default::default(),
             use_x_forwarded: false,
+            redirect_root: Some("/account".to_string()),
         }
     }
 }
 
 impl IntoValue for Http {
     fn into_value(self) -> JmapValue<'static> {
-        let mut map = jmap_tools::Map::with_capacity(9);
+        let mut map = jmap_tools::Map::with_capacity(10);
         map.insert_unchecked(
             Property::RateLimitAuthenticated,
             self.rate_limit_authenticated.into_value(),
@@ -21305,6 +21336,7 @@ impl IntoValue for Http {
             self.response_headers.into_value(),
         );
         map.insert_unchecked(Property::UseXForwarded, self.use_x_forwarded.into_value());
+        map.insert_unchecked(Property::RedirectRoot, self.redirect_root.into_value());
         JmapValue::Object(map)
     }
 }
@@ -21327,6 +21359,9 @@ impl RegistryJsonPropertyPatch for Http {
                 .response_headers
                 .patch(pointer.with_validators(&[StringValidator::Trim]), value),
             Some(Property::UseXForwarded) => self.use_x_forwarded.patch(pointer, value),
+            Some(Property::RedirectRoot) => self
+                .redirect_root
+                .patch(pointer.with_validators(&[StringValidator::Trim]), value),
             Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
                 property: Property::Type,
                 value,
@@ -27038,7 +27073,9 @@ impl ObjectImpl for MtaQueueQuota {
             errors.push(ValidationError::min_items(Property::Key, 1));
         }
         let value = &self.match_;
-        value.validate(errors);
+        if !value.match_.is_empty() || !value.else_.is_empty() {
+            value.validate(errors);
+        }
         if let Some(value) = &self.messages {
             if *value < 1 {
                 errors.push(ValidationError::min_value(Property::Messages, 1));
@@ -30109,7 +30146,7 @@ impl Default for OidcProvider {
     fn default() -> Self {
         Self {
             auth_code_max_attempts: 3u64,
-            anonymous_client_registration: false,
+            anonymous_client_registration: true,
             require_client_registration: false,
             auth_code_expiry: Duration::from_millis(600000),
             refresh_token_expiry: Duration::from_millis(2592000000),
@@ -35218,7 +35255,9 @@ impl ObjectImpl for SieveSystemInterpreter {
             }
         }
         let value = &self.default_return_path;
-        value.validate(errors);
+        if !value.match_.is_empty() || !value.else_.is_empty() {
+            value.validate(errors);
+        }
         let value = &self.dkim_sign_domain;
         value.validate(errors);
         let value = &self.max_cpu_cycles;

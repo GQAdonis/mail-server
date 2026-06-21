@@ -4,9 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use crate::{
-    Server, auth::DomainCache, cache::invalidate::CacheInvalidationBuilder, ipc::BroadcastEvent,
-};
+use crate::{Server, auth::DomainCache, cache::invalidate::CacheInvalidationBuilder};
 use registry::{
     schema::{
         prelude::{Object, ObjectType},
@@ -169,8 +167,6 @@ impl Server {
                             enabled: true,
                             description: None,
                         });
-
-                        self.invalidate_local_negative_account_cache(local, alias_domain.id);
                     }
                 }
                 let mut member_group_ids = Vec::with_capacity(account.groups.len());
@@ -222,9 +218,11 @@ impl Server {
                     .caused_by(trc::location!())?
                 {
                     RegistryWriteResult::Success(id) => {
-                        self.invalidate_local_negative_account_cache(local, domain.id);
-                        self.cluster_broadcast(BroadcastEvent::CacheInvalidateNegative)
-                            .await;
+                        let mut invalidator = CacheInvalidationBuilder::default();
+                        invalidator.process_create(&account);
+                        self.invalidate_caches(invalidator)
+                            .await
+                            .caused_by(trc::location!())?;
 
                         Ok(AccountWithId {
                             id: id.document_id(),
@@ -343,8 +341,6 @@ impl Server {
                             enabled: true,
                             description: None,
                         });
-
-                        self.invalidate_local_negative_account_cache(local, alias_domain.id);
                     }
                 }
 
@@ -377,7 +373,11 @@ impl Server {
                     .caused_by(trc::location!())?
                 {
                     RegistryWriteResult::Success(id) => {
-                        self.invalidate_local_negative_account_cache(local, domain.id);
+                        let mut invalidator = CacheInvalidationBuilder::default();
+                        invalidator.process_create(&account);
+                        self.invalidate_caches(invalidator)
+                            .await
+                            .caused_by(trc::location!())?;
 
                         Ok(id.document_id())
                     }

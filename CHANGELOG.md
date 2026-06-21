@@ -2,16 +2,92 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.16.8] - 2026-06-XX
+## [0.16.10] - 2026-06-21
+
+If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
+
+## Added
+- International Domain Names (IDN) support (#207).
+- OAuth:
+  - OAuth Profile for Open Public Clients ([draft-ietf-mailmaint-oauth-public](https://datatracker.ietf.org/doc/draft-ietf-mailmaint-oauth-public/))
+  - Client secret verification for confidential clients.
+- HTTP: Add `redirectRoot` option to `Http` object to allow redirecting requests to the root path to a different path (e.g. `/account`).
+- ACME: `reuseKey` option to allow reusing private keys in renewals.
+- IMAP: 
+  - IMAP Extension for Object Identifiers ([draft-ietf-mailmaint-imap-objectid-bis](https://datatracker.ietf.org/doc/draft-ietf-mailmaint-imap-objectid-bis/))
+  - `GETJMAPACCESS` command to discover the JMAP session resource URL (#2736).
+
+## Changed
+
+## Fixed
+- JMAP conformance (pass the [jmap-test-suite](https://github.com/jmapio/jmap-test-suite) tests):
+  - Methods are only available if their capability is in `using`.
+  - Reject requests that do not specify `application/json` in the `Content-Type` header.
+  - Require `accountId` argument on requests.
+  - Return unparsable ids in `notFound` / `notUpdated` / `notDestroyed` / `notCopied` instead of dropping them.
+  - Default calendars and address books are not subscribed by default.
+  - `*/set`: Unchanged immutable `id` property is rejected on update.
+  - `*/query` and `*/queryChanges`: null` rejected as `notRequest`.
+  - `Email/query`:
+    * Improper `anchor` handling.
+    * Total miscount when `collapseThreads` is enabled.
+    * Wrong sort order on `hasKeyword`, `allInThreadHaveKeyword`, and `someInThreadHaveKeyword` conditions.
+    * Non-standard header values are not searchable.
+  - `Email/copy`: Take the source message id from the value's `id` property.
+  - `Email/set`: Bump reference-resolution max_depth from 1 to 2.
+  - `Email/import`: Reject blobs that do not contain valid messages.
+  - `EmailSubmission/set`: return `sendAt` and `undoStatus` in the created response.
+  - `Mailbox/set`: Return `alreadyExists` instead of `invalidProperties` when creating a mailbox with an existing name.
+  - `SearchSnippet/get`: incorrect response structure.
+  - `Thread/changes`: emit a container delete when a thread becomes empty.
+  - `VacationResponse/set`: incorrect singleton handling.
+- IMAP: Discard oversized non-synchronizing literals (#2768).
+- DANE: Improper `TLSA` record validation (#2328 - credits to @vdukhovni).
+- OIDC: Add default domain name to groups that are not email addresses.
+- RocksDB: Enable blob garbage collection to reclaim disk space from deleted blobs.
+- Sieve: `include` statements ignore capitalisation of sub-script names (#1643)
+- Cache: Invalidate negative email caches when an account is created.
+- Troubleshoot tool: Use the configured source IP address when connecting to remote servers (#2867).
+
+## [0.16.9] - 2026-06-15
+
+If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
+
+## Added
+- ACME: Allow specifying a preferred certificate chain.
+
+## Changed
+
+## Fixed
+- JMAP: `*/changes` methods leak ids of non-shared objects (reported by @5ud0er).
+- Sieve: Do not allow invalid certs in `http_header` function.
+- FoundationDB: Fix read version cache expiration logic.
+- MTA: Re-scheduling or editing a queued message reports success but persists nothing for recipients in a non-`default` virtual queue.
+- CardDAV: Version requests included in `address-data` are ignored.
+- ACME: Add freshness check when renewing certificates.
+- Autodiscover v2: Read email address from query parameters.
+- Sieve: Do not keep copies of redirected messages when `keep` is not specified.
+- Registry: Object ids are parsed as numbers.
+
+## [0.16.8] - 2026-06-06
 
 If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
 
 ## Added
 
 ## Changed
-- OAuth: Rework access tokens to an `AES-256-GCM-SIV` AEAD format that carries the account name for proxy routing and revokes tokens on credential change.
+- OAuth: Rework access tokens to an `AES-256-GCM-SIV` AEAD format that carries the account name for proxy routing.
+- Added more internal TLDs to the domain validation.
 
 ## Fixed
+- MTA: 
+  - Sub-addressing with external directories returns `550 Mailbox not found`.
+  - Disabled aliases continue receiving messages.
+- JMAP for File Storage: `FileNode/get` returns a stale state string.
+- Make `SieveSystemInterpreter.defaultReturnPath` and `MtaQueueQuota.match` optional expressions.
+- Rate limiter panics when periods under 1 second are used.
+- CalDAV/CardDAV: Calendar events, contacts, calendars and address books deleted via JMAP do not write a vanished tombstone.
+- DNS updater: bump to `dns-update-v0.5.1`.
 
 ## [0.16.7] - 2026-05-28
 

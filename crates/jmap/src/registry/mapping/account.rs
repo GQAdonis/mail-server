@@ -25,7 +25,7 @@ use common::{
     ipc::CacheInvalidation,
 };
 use directory::core::secret::{SecretVerificationResult, hash_secret, verify_mfa_secret_hash};
-use jmap_proto::{error::set::SetError, types::state::State};
+use jmap_proto::{error::set::SetError, request::MaybeInvalid, types::state::State};
 use jmap_tools::{JsonPointer, JsonPointerItem, Key, Map, Value};
 use registry::{
     jmap::{IntoValue, JsonPointerPatch, MaybeUnpatched, RegistryJsonPatch, RegistryValue},
@@ -646,13 +646,13 @@ pub(crate) async fn account_set(
                     .response
                     .updated
                     .into_keys()
-                    .map(|id| (id, err.clone()))
+                    .map(|id| (MaybeInvalid::Value(id), err.clone()))
                     .collect::<Vec<_>>();
                 let failed_delete = set
                     .response
                     .destroyed
                     .into_iter()
-                    .map(|id| (id, err.clone()))
+                    .map(|id| (MaybeInvalid::Value(id), err.clone()))
                     .collect::<Vec<_>>();
 
                 set.response.not_created.extend(failed_create);
@@ -706,7 +706,7 @@ pub(crate) async fn account_get(
                 }
             }
 
-            get.response.not_found.extend(ids);
+            get.response.not_found.extend(ids.map(MaybeInvalid::Value));
         }
         ObjectType::AccountPassword => {
             let mut ids = get
@@ -747,7 +747,7 @@ pub(crate) async fn account_get(
                 }
             }
 
-            get.response.not_found.extend(ids);
+            get.response.not_found.extend(ids.map(MaybeInvalid::Value));
         }
         ObjectType::ApiKey | ObjectType::AppPassword => {
             let mut ids = if let Some(ids) = get.ids.take() {

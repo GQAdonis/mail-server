@@ -5,19 +5,30 @@
  */
 
 use super::NextHop;
+use crate::outbound::dane::dnssec::DnssecStatus;
 use crate::queue::{Error, ErrorDetails, HostResponse, Status};
 use common::{
     Server,
     config::smtp::queue::{ConnectionStrategy, HostOrIp, IpAndHost, MxConfig},
     expr::functions::ResolveVariable,
 };
-use mail_auth::{IpLookupStrategy, MX};
+use mail_auth::{
+    IpLookupStrategy, MX,
+    common::resolver::ToFqdn,
+    hickory_resolver::proto::rr::{Name, RData, RecordType},
+};
 use rand::{Rng, seq::SliceRandom};
 use registry::schema::enums::ExpressionVariable;
-use std::{future::Future, net::IpAddr, sync::Arc};
+use std::{
+    future::Future,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
+    time::Instant,
+};
 
 pub struct IpLookupResult {
     pub remote_ips: Vec<IpAddr>,
+    pub dnssec_status: DnssecStatus,
 }
 
 pub trait DnsLookup: Sync + Send {
@@ -28,10 +39,18 @@ pub trait DnsLookup: Sync + Send {
         max_results: usize,
     ) -> impl Future<Output = mail_auth::Result<Vec<IpAddr>>> + Send;
 
+    fn dnssec_ip_lookup(
+        &self,
+        key: &str,
+        strategy: IpLookupStrategy,
+        max_results: usize,
+    ) -> impl Future<Output = mail_auth::Result<(Vec<IpAddr>, DnssecStatus)>> + Send;
+
     fn resolve_host(
         &self,
         remote_host: &NextHop<'_>,
         envelope: &impl ResolveVariable,
+        use_dnssec: bool,
     ) -> impl Future<Output = Result<IpLookupResult, Status<HostResponse<Box<str>>, ErrorDetails>>> + Send;
 }
 
@@ -105,21 +124,174 @@ impl DnsLookup for Server {
         }
     }
 
+    async fn dnssec_ip_lookup(
+        &self,
+        key: &str,
+        strategy: IpLookupStrategy,
+        max_results: usize,
+    ) -> mail_auth::Result<(Vec<IpAddr>, DnssecStatus)> {
+        let fqdn = key.to_fqdn();
+        if let Some(secure) = self.inner.cache.dns_dnssec.get(fqdn.as_ref()) {
+            return Ok((
+                self.ip_lookup(key, strategy, max_results).await?,
+                if secure {
+                    DnssecStatus::Secure
+                } else {
+                    DnssecStatus::Insecure
+                },
+            ));
+        }
+
+        #[cfg(any(test, feature = "test_mode"))]
+        if true {
+            return Ok((
+                self.ip_lookup(key, strategy, max_results).await?,
+                DnssecStatus::Secure,
+            ));
+        }
+
+        let (query_v4, query_v6, v4_first) = match strategy {
+            IpLookupStrategy::Ipv4Only => (true, false, true),
+            IpLookupStrategy::Ipv6Only => (false, true, false),
+            IpLookupStrategy::Ipv4thenIpv6 => (true, true, true),
+            IpLookupStrategy::Ipv6thenIpv4 => (true, true, false),
+        };
+        let resolver = &self.core.smtp.resolvers.dnssec.resolver;
+        let name = Name::from_str_relaxed(fqdn.as_ref())?;
+
+        let mut ipv4: Vec<Ipv4Addr> = Vec::new();
+        let mut ipv6: Vec<Ipv6Addr> = Vec::new();
+        let mut all_secure = true;
+        let mut v4_valid_until: Option<Instant> = None;
+        let mut v6_valid_until: Option<Instant> = None;
+        let mut not_found: Option<mail_auth::Error> = None;
+
+        let mut record_types = Vec::with_capacity(2);
+        if query_v4 {
+            record_types.push(RecordType::A);
+        }
+        if query_v6 {
+            record_types.push(RecordType::AAAA);
+        }
+
+        for record_type in record_types {
+            match resolver.lookup(name.clone(), record_type).await {
+                Ok(lookup) => {
+                    let valid_until = lookup.valid_until();
+                    let mut found = false;
+                    for record in lookup.answers() {
+                        if !record.proof.is_secure() {
+                            all_secure = false;
+                        }
+                        match &record.data {
+                            RData::A(a) => {
+                                ipv4.push(a.0);
+                                found = true;
+                            }
+                            RData::AAAA(aaaa) => {
+                                ipv6.push(aaaa.0);
+                                found = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if found {
+                        if record_type == RecordType::A {
+                            v4_valid_until = Some(valid_until);
+                        } else {
+                            v6_valid_until = Some(valid_until);
+                        }
+                    }
+                }
+                Err(err) => {
+                    let err: mail_auth::Error = err.into();
+                    if matches!(err, mail_auth::Error::DnsRecordNotFound(_)) {
+                        not_found = Some(err);
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        if ipv4.is_empty() && ipv6.is_empty() {
+            return Err(not_found.unwrap_or(mail_auth::Error::DnsRecordNotFound(
+                mail_auth::hickory_resolver::proto::op::ResponseCode::NXDomain,
+            )));
+        }
+
+        if let Some(valid_until) = v4_valid_until {
+            self.inner.cache.dns_ipv4.insert_with_expiry(
+                fqdn.clone(),
+                Arc::from(ipv4.as_slice()),
+                valid_until,
+            );
+        }
+        if let Some(valid_until) = v6_valid_until {
+            self.inner.cache.dns_ipv6.insert_with_expiry(
+                fqdn.clone(),
+                Arc::from(ipv6.as_slice()),
+                valid_until,
+            );
+        }
+        if let Some(valid_until) = v4_valid_until.into_iter().chain(v6_valid_until).min() {
+            self.inner
+                .cache
+                .dns_dnssec
+                .insert_with_expiry(fqdn, all_secure, valid_until);
+        }
+
+        let remote_ips: Vec<IpAddr> = if v4_first {
+            ipv4.into_iter()
+                .map(IpAddr::from)
+                .chain(ipv6.into_iter().map(IpAddr::from))
+                .take(max_results)
+                .collect()
+        } else {
+            ipv6.into_iter()
+                .map(IpAddr::from)
+                .chain(ipv4.into_iter().map(IpAddr::from))
+                .take(max_results)
+                .collect()
+        };
+
+        Ok((
+            remote_ips,
+            if all_secure {
+                DnssecStatus::Secure
+            } else {
+                DnssecStatus::Insecure
+            },
+        ))
+    }
+
     #[allow(unused_mut)]
     async fn resolve_host(
         &self,
         remote_host: &NextHop<'_>,
         envelope: &impl ResolveVariable,
+        use_dnssec: bool,
     ) -> Result<IpLookupResult, Status<HostResponse<Box<str>>, ErrorDetails>> {
-        let mut remote_ips = match remote_host.fqdn_hostname() {
-            HostOrIp::Host(hostname) => self
-                .ip_lookup(
-                    hostname.as_ref(),
-                    remote_host.ip_lookup_strategy(),
-                    remote_host.max_multi_homed(),
-                )
-                .await
-                .map_err(|err| {
+        let (mut remote_ips, dnssec_status) = match remote_host.fqdn_hostname() {
+            HostOrIp::Host(hostname) => {
+                let lookup = if use_dnssec {
+                    self.dnssec_ip_lookup(
+                        hostname.as_ref(),
+                        remote_host.ip_lookup_strategy(),
+                        remote_host.max_multi_homed(),
+                    )
+                    .await
+                } else {
+                    self.ip_lookup(
+                        hostname.as_ref(),
+                        remote_host.ip_lookup_strategy(),
+                        remote_host.max_multi_homed(),
+                    )
+                    .await
+                    .map(|ips| (ips, DnssecStatus::Insecure))
+                };
+
+                lookup.map_err(|err| {
                     if let mail_auth::Error::DnsRecordNotFound(_) = &err {
                         if matches!(
                             remote_host,
@@ -146,8 +318,9 @@ impl DnsLookup for Server {
                             ),
                         })
                     }
-                })?,
-            HostOrIp::Ip(ip) => vec![ip],
+                })?
+            }
+            HostOrIp::Ip(ip) => (vec![ip], DnssecStatus::Insecure),
         };
 
         if !remote_ips.is_empty() {
@@ -162,7 +335,10 @@ impl DnsLookup for Server {
                 }
             }
 
-            Ok(IpLookupResult { remote_ips })
+            Ok(IpLookupResult {
+                remote_ips,
+                dnssec_status,
+            })
         } else {
             Err(Status::TemporaryFailure(ErrorDetails {
                 entity: remote_host.hostname().into(),
