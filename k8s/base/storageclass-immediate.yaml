@@ -15,7 +15,11 @@ metadata:
   name: stalwart-immediate
 provisioner: pd.csi.storage.gke.io
 parameters:
-  type: pd-balanced
+  # pd-standard (HDD) draws from the DISKS_TOTAL_GB quota, which has ample
+  # headroom in this cluster; pd-balanced/pd-ssd would hit the saturated
+  # regional SSD_TOTAL_GB quota. For a mail server's metadata + blob storage,
+  # standard disks are an acceptable price/perf trade-off.
+  type: pd-standard
 volumeBindingMode: Immediate
 allowVolumeExpansion: true
 reclaimPolicy: Retain

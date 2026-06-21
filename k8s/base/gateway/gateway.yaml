@@ -16,7 +16,7 @@ metadata:
   name: stalwart-gateway
   namespace: stalwart
 spec:
-  gatewayClassName: stalwart-eg
+  gatewayClassName: eg          # shared cluster-wide Envoy Gateway GatewayClass
   listeners:
     # --- ACME HTTP-01 + HTTP->HTTPS redirect ---
     - name: http
