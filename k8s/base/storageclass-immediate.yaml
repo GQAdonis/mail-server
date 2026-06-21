@@ -1,0 +1,21 @@
+# Immediate-binding StorageClass.
+#
+# GKE's default `standard-rwo` / `premium-rwo` use volumeBindingMode:
+# WaitForFirstConsumer, which delays PV provisioning until a consuming Pod is
+# scheduled. The requirement here is IMMEDIATE binding, so PVs are provisioned
+# as soon as the PVC is created (independent of Pod scheduling).
+#
+# Trade-off: with Immediate binding the PD is created before the scheduler
+# picks a zone, so the scheduler is then constrained to the PD's zone. For a
+# single-zone mail server (Postgres StatefulSet + Stalwart config volume) this
+# is the desired behavior.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: stalwart-immediate
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-balanced
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+reclaimPolicy: Retain

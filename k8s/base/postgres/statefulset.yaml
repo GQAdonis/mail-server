@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stalwart-postgres
+  namespace: stalwart
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: stalwart
+spec:
+  serviceName: stalwart-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/part-of: stalwart
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: stalwart
+    spec:
+      securityContext:
+        # The official postgres entrypoint must start as root and drop to the
+        # postgres user (uid 999) itself via gosu — it errors if forced to run
+        # as non-root. We only set fsGroup so the PVC is group-writable.
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:17-bookworm
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: stalwart-postgres
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stalwart-postgres
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stalwart-postgres
+                  key: POSTGRES_PASSWORD
+            # Keep PGDATA in a subdir so lost+found on the volume root never
+            # blocks initdb.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 512Mi
+            limits:
+              cpu: "1000m"
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: stalwart-immediate   # immediate-binding (see base/storageclass-immediate.yaml)
+        resources:
+          requests:
+            storage: 20Gi

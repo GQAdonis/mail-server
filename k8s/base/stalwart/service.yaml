@@ -1,0 +1,28 @@
+# ClusterIP service fronting the Stalwart pods. The Envoy Gateway routes
+# (HTTPRoute for web/JMAP, TCPRoutes for the mail protocols) target this
+# service. TLS for the mail protocols is terminated by Stalwart itself, so the
+# Gateway only L4-passes those ports — it does not terminate their TLS.
+apiVersion: v1
+kind: Service
+metadata:
+  name: stalwart
+  namespace: stalwart
+  labels:
+    app.kubernetes.io/name: stalwart
+    app.kubernetes.io/part-of: stalwart
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: stalwart
+    app.kubernetes.io/part-of: stalwart
+  ports:
+    - { name: smtp,        port: 25,   targetPort: smtp }
+    - { name: submissions, port: 465,  targetPort: submissions }
+    - { name: submission,  port: 587,  targetPort: submission }
+    - { name: imaps,       port: 993,  targetPort: imaps }
+    - { name: imap,        port: 143,  targetPort: imap }
+    - { name: pop3s,       port: 995,  targetPort: pop3s }
+    - { name: pop3,        port: 110,  targetPort: pop3 }
+    - { name: managesieve, port: 4190, targetPort: managesieve }
+    - { name: https,       port: 443,  targetPort: https }
+    - { name: setup,       port: 8080, targetPort: setup }

@@ -1,0 +1,19 @@
+# Headless service for stable StatefulSet network identity
+# (stalwart-postgres-0.stalwart-postgres.stalwart.svc.cluster.local).
+apiVersion: v1
+kind: Service
+metadata:
+  name: stalwart-postgres
+  namespace: stalwart
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: stalwart
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: stalwart
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

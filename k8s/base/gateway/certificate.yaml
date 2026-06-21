@@ -1,0 +1,60 @@
+# cert-manager: Let's Encrypt issuer (ACME HTTP-01 via the Gateway API) and the
+# Certificate for mail.parlour-world.io.
+#
+# Requires cert-manager installed with the Gateway API feature gate enabled:
+#   helm upgrade --install cert-manager jetstack/cert-manager \
+#     --set config.enableGatewayAPI=true --set crds.enabled=true ...
+#
+# The issued cert is written to Secret/stalwart-tls, which is mounted into the
+# Stalwart pod at /etc/stalwart/tls. Stalwart terminates TLS for ALL protocols
+# (web/JMAP on :443 via Gateway passthrough, plus SMTP/IMAP/POP3 STARTTLS +
+# implicit TLS), presenting this cert. Envoy never terminates it. After first
+# boot, point Stalwart's TLS config at /etc/stalwart/tls/tls.crt + tls.key via
+# the admin UI (see k8s/README.md).
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@parlour-world.io          # REPLACE with a real ops contact
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: stalwart-gateway
+                namespace: stalwart
+                kind: Gateway
+                sectionName: http      # the :80 listener
+# --- DNS-01 alternative (no port 80 needed; requires CloudDNS + GCP SA secret) ---
+# Replace the solvers block above with:
+#     solvers:
+#       - dns01:
+#           cloudDNS:
+#             project: <GCP_PROJECT_ID>
+#             serviceAccountSecretRef:
+#               name: clouddns-dns01-solver
+#               key: key.json
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: stalwart-tls
+  namespace: stalwart
+spec:
+  secretName: stalwart-tls
+  dnsNames:
+    - mail.parlour-world.io
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  usages:
+    - server auth
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always

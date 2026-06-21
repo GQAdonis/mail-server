@@ -1,0 +1,44 @@
+# Web admin + JMAP routing.
+#
+# The :443 listener is TLS *Passthrough* — Stalwart terminates web TLS itself
+# (the same way it terminates IMAP/SMTP/POP3 TLS), presenting the cert-manager
+# cert mounted at /etc/stalwart/tls. Envoy stays pure L4 for ALL of Stalwart's
+# traffic: one TLS termination point, no re-encrypt / BackendTLSPolicy / CA
+# bundle to manage. The TLSRoute below forwards :443 SNI traffic for the host to
+# Stalwart's :443.
+#
+# The :80 HTTP listener carries (a) cert-manager's ACME HTTP-01 challenge —
+# its solver injects a temporary HTTPRoute for /.well-known/acme-challenge/*
+# that takes precedence — and (b) the HTTP->HTTPS redirect below.
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: stalwart-web
+  namespace: stalwart
+spec:
+  parentRefs:
+    - name: stalwart-gateway
+      sectionName: https
+  hostnames: ["mail.parlour-world.io"]
+  rules:
+    - backendRefs:
+        - name: stalwart
+          port: 443
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: stalwart-http-redirect
+  namespace: stalwart
+spec:
+  parentRefs:
+    - name: stalwart-gateway
+      sectionName: http
+  hostnames: ["mail.parlour-world.io"]
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
