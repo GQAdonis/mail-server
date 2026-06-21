@@ -23,8 +23,8 @@ configMapGenerator:
     files:
       - config.json=config-bootstrap.json
 
-# Blobs live on the data PVC now (FileSystem blob store) — enlarge it.
 patches:
+  # Blobs live on the data PVC now (FileSystem blob store) — enlarge it.
   - target:
       kind: StatefulSet
       name: stalwart
@@ -32,6 +32,27 @@ patches:
       - op: replace
         path: /spec/volumeClaimTemplates/1/spec/resources/requests/storage
         value: 40Gi
+  # First-run access: enable recovery mode so admin:<password> (from the
+  # stalwart-runtime secret) can log in to the web UI to complete setup.
+  # Once setup is done and a real admin account exists, remove this patch
+  # and STALWART_RECOVERY_ADMIN from the secret, then roll the pod.
+  - target:
+      kind: StatefulSet
+      name: stalwart
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: STALWART_RECOVERY_MODE
+          value: "true"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: STALWART_RECOVERY_ADMIN
+          valueFrom:
+            secretKeyRef:
+              name: stalwart-runtime
+              key: STALWART_RECOVERY_ADMIN
 
 # --- Secrets -----------------------------------------------------------------
 # Provide real values via these env files (gitignored — see k8s/.gitignore), or

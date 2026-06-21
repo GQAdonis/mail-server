@@ -67,9 +67,10 @@ spec:
               value: https://mail.parlour-world.io
             - name: STALWART_HTTPS_PORT
               value: "443"
-            # Cluster node role (single-node default). See crates/store/src/registry/local.rs.
-            - name: STALWART_ROLE
-              value: "all"
+            # STALWART_ROLE is intentionally unset: it must name a ClusterRole
+            # that exists in the registry/DB. When unset, a single node runs all
+            # listeners by default (crates/store/src/registry/bootstrap.rs). Set
+            # it only after defining named cluster roles for a multi-node setup.
             - name: STALWART_PG_PASSWORD
               valueFrom:
                 secretKeyRef: { name: stalwart-runtime, key: STALWART_PG_PASSWORD }
