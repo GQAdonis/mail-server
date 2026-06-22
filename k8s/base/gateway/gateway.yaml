@@ -27,15 +27,12 @@ spec:
         namespaces: { from: Same }
 
     # --- Web admin + JMAP: TLS passthrough, terminated by Stalwart ---
-    - name: https
-      protocol: TLS
-      port: 443
-      hostname: mail.parlour-world.io
-      tls:
-        mode: Passthrough
-      allowedRoutes:
-        kinds: [{ kind: TLSRoute }]
-        namespaces: { from: Same }
+    # Web/JMAP on :443 — plain TCP passthrough (same as the mail TLS ports
+    # below), NOT a TLS/TLSRoute listener. Envoy's TLSRoute does SNI inspection
+    # on the passthrough and was resetting the handshake ("unexpected eof");
+    # forwarding raw bytes via a TCPRoute (Stalwart terminates TLS) is robust
+    # and consistent with how 993/465/995 are handled.
+    - { name: https,       protocol: TCP, port: 443,  allowedRoutes: { kinds: [{ kind: TCPRoute }] } }
 
     # --- Mail protocols: raw TCP, terminated by Stalwart ---
     - { name: smtp,        protocol: TCP, port: 25,   allowedRoutes: { kinds: [{ kind: TCPRoute }] } }

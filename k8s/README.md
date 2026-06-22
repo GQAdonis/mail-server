@@ -142,9 +142,15 @@ kubectl -n stalwart get gateway stalwart-gateway -o jsonpath='{.status.addresses
 
 ## How traffic flows
 
+> [!NOTE]
+> After changing a Gateway listener's protocol (e.g. swapping the :443 route
+> kind), restart the Envoy proxy pod for this gateway so it fully reconciles —
+> stale xDS config otherwise resets connections (`bytes_sent: 0`):
+> `kubectl delete pod -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=stalwart-gateway`
+
 | Port(s) | Listener | Route kind | TLS terminated by |
 |---|---|---|---|
-| 443 | `https` (TLS passthrough) | `TLSRoute` | **Stalwart** |
+| 443 | `https` (TCP) | `TCPRoute` | **Stalwart** |
 | 80  | `http` | `HTTPRoute` (ACME + redirect) | n/a |
 | 25, 465, 587, 143, 993, 110, 995, 4190 | per-port `TCP` | `TCPRoute` | **Stalwart** (L4 passthrough) |
 | 8080 | none (port-forward only) | — | n/a |
