@@ -97,9 +97,12 @@ kubectl apply -k k8s/overlays/parlour-world
 ### Phase 1 — infrastructure comes up
 
 Postgres and Stalwart start; Envoy Gateway provisions a LoadBalancer with one
-external IP carrying every listener (443 + the mail ports). Stalwart enters
-**bootstrap mode** and opens **port 8080** for first-run setup (no domains exist
-yet). cert-manager begins issuing the certificate once DNS resolves (step 4).
+external IP carrying every listener (443 + the mail ports). The overlay sets a
+**fallback admin** (`STALWART_RECOVERY_ADMIN=admin:<password>` in the
+`stalwart-runtime` secret) so you can log in to the web UI on :443 before any
+real admin account exists — this is honored at normal auth time, so the server
+runs normally (not in recovery mode). cert-manager issues the cert once DNS
+resolves (step 4).
 
 ```bash
 # Get the external IP
@@ -108,28 +111,34 @@ kubectl -n stalwart get gateway stalwart-gateway -o jsonpath='{.status.addresses
 
 ### Phase 2 — point DNS, then finish setup
 
-1. Create DNS records at the IP from above:
-   - `mail.parlour-world.io  A     <EXTERNAL_IP>`
+1. Point DNS at the external IP from above. A specific `mail` A record overrides
+   any wildcard. Keep it **unproxied** (DNS-only) — the mail ports are raw TCP
+   that an HTTP proxy can't carry, and ACME HTTP-01 must reach the gateway
+   directly:
+   - `mail.parlour-world.io  A     <EXTERNAL_IP>`   (proxied = false)
    - `parlour-world.io       MX 10 mail.parlour-world.io`
    - SPF/DKIM/DMARC `TXT` records (Stalwart generates DKIM keys on first boot —
      read the selector from the admin UI).
-2. Wait for the cert: `kubectl -n stalwart get certificate stalwart-tls`.
-3. Reach the setup UI on **:8080**. It is intentionally **not** exposed through
-   the Gateway (no public listener) — reach it via port-forward:
+
+   Cloudflare example (zone hosted on Cloudflare):
    ```bash
-   kubectl -n stalwart port-forward sts/stalwart 8080:8080
-   # then open http://localhost:8080
+   curl -X POST "https://api.cloudflare.com/client/v4/zones/<ZONE_ID>/dns_records" \
+     -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
+     -d '{"type":"A","name":"mail","content":"<EXTERNAL_IP>","ttl":300,"proxied":false}'
    ```
-   Or drive setup with the CLI inside the pod:
-   ```bash
-   kubectl -n stalwart exec -it sts/stalwart -- stalwart --help
-   ```
-   Configure: the `parlour-world.io` domain, the admin account, and point
-   Stalwart's **TLS** (for both web/:443 and the mail protocols) at the mounted
-   cert `/etc/stalwart/tls/tls.crt` + `tls.key` (populated by cert-manager). Once
-   the server is configured it opens :443; the Gateway's TLS-passthrough listener
-   then carries web/JMAP traffic to it, and the startupProbe hands off to the
-   liveness/readiness probes.
+2. Wait for the cert: `kubectl -n stalwart get certificate stalwart-tls`
+   (should report `Ready=True` once the A record resolves).
+3. Open **https://mail.parlour-world.io/** and log in as `admin` with the
+   fallback password. In the admin UI:
+   - create the `parlour-world.io` domain and a real admin account;
+   - point Stalwart's **TLS** (web/:443 + mail protocols) at the mounted cert
+     `/etc/stalwart/tls/tls.crt` + `tls.key` (populated by cert-manager) — until
+     then Stalwart serves a self-signed `rcgen` cert;
+   - configure the blob store (this overlay defaults to a FileSystem blob store
+     on the data PVC; switch to S3/GCS here once HMAC interop keys exist).
+4. **After** a real admin account exists, remove the fallback admin: delete the
+   `STALWART_RECOVERY_ADMIN` patch from the overlay + the secret key, re-apply,
+   and roll the pod.
 
 ## How traffic flows
 
